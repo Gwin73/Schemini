@@ -5,10 +5,10 @@ import Text.ParserCombinators.Parsec hiding (spaces)
 
 import Control.Monad (forM)
  
-main = forM (  ["if", "define", "set!", "lambda", "quote" , "(if)", "(if define set!)", "\'if", "\'(if)"] 
-    ++ ["#t", "#f", "(#t)" ,"(#t #f #f)", "(#t (#f #f))", "\'#t", "\'(#t #f #f)"] 
-    ++ ["123", "()", "(1)" ,"(1 2 3)", "(1 (2 3))", "\'1", "\'(1 2 3)"] 
-    ++ ["\"asd\"", "\"\\\"asd\\\"\"", "\"\\\\asd\\\\\"", "(\"asd\")" ,"(\"asd\" \"asd\" \"asd\")", "(\"asd\" (\"asd\" \"asd\"))", "\'\"asd\"", "\'(\"asd\" \"asd\" \"asd\")"]) 
+main = forM (  ["if", "define", "set!", "lambda", "quote" , "(if)", "(if define set!)", "'if", "'(if)"] 
+    ++ ["#t", "#f", "(#t)" ,"(#t #f #f)", "(#t (#f #f))", "'#t", "'(#t #f #f)"] 
+    ++ ["123", "()", "(1)" ,"(1 2 3)", "(1 (2 3))", "'1", "'(1 2 3)"] 
+    ++ ["\"asd\"", "\"\\\"asd\\\"\"", "\"\\\\asd\\\\\"", "(\"asd\")" ,"(\"asd\" \"asd\" \"asd\")", "(\"asd\" (\"asd\" \"asd\"))", "'\"asd\"", "'(\"asd\" \"asd\" \"asd\")"]) 
     (putStrLn . show . parseExpr)
 
 parseExpr :: String -> String
@@ -18,15 +18,15 @@ parseExpr input = case parse expr "Scheme" input of
 
 expr :: Parser LispVal
 expr 
-      =  symbol      
+      =  atom      
      <|> bool
      <|> integer
      <|> string'
      <|> quoted
      <|> list
 
-symbol :: Parser LispVal
-symbol = identifier >>= (return . Symbol)
+atom :: Parser LispVal
+atom = identifier >>= (return . Atom)
 
 bool :: Parser LispVal
 bool = (reserved "#t" >> (return $ Bool True)) <|> (reserved "#f" >> (return $ Bool False))
@@ -39,14 +39,14 @@ string' = lexeme $ between (char '\"') (char '\"') (many (escapeChar <|> noneOf 
     where escapeChar = char '\\' >> oneOf ['\\', '"'] >>= return
 
 quoted :: Parser LispVal
-quoted = lexeme $ string "\'" >> expr >>= \x -> return $ List [Symbol "quote", x]
+quoted = lexeme $ string "'" >> expr >>= \x -> return $ List [Atom "quote", x]
 
 list :: Parser LispVal
 list = parens $ many expr >>= return . List
 
 
 data LispVal 
-    = Symbol String
+    = Atom String
     | Bool Bool
     | Integer Integer
     | String String
@@ -54,7 +54,7 @@ data LispVal
 
 instance Show LispVal where
     show v = case v of
-        Symbol s -> "Symbol: " ++ s
+        Atom s -> "Atom: " ++ s
         Bool True -> "Bool: #t"
         Bool False -> "Bool: #f"
         Integer n -> "Integer: " ++ show n
@@ -71,5 +71,5 @@ schemeDef :: Tok.GenLanguageDef String () Identity
 schemeDef = Lang.emptyDef 
     { Tok.identStart = letter <|> oneOf "!$%&*/:<=>?^_~"
     , Tok.identLetter = digit <|> Tok.identStart schemeDef
-    , Tok.reservedNames = ["#t", "#f", "\'"]
+    , Tok.reservedNames = ["#t", "#f", "'"]
     }
