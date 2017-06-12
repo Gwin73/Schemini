@@ -4,16 +4,21 @@ import Text.ParserCombinators.Parsec hiding (spaces)
 import Data.Functor.Identity (Identity)
 import Control.Monad (forM)
 import Control.Monad.Except
+import qualified Data.Map as M
+import Control.Monad.Reader
  
 main = forM (["if", "'if", "#t", "'#t", "123", "'123", "\"asd\"", "'\"asd\"", "()", "'()", "'(asd (2 \"asd\"))"]
     ++ ["(if #t 1 2)", "(if #f 1 2)"] ++ ["\" \\\\asd\\\\ \""]) 
     (print . interp)
 
 interp :: String -> Either LispExcept LispVal
-interp input = either (throwError . ParseExcept) (eval) (parseExpr input)
+interp input = either 
+        (throwError . ParseExcept) 
+        (\x -> runReaderT (eval x) emptyEnv) 
+        (parseExpr input)
 
 parseExpr :: String -> Either ParseError LispVal
-parseExpr input = parse (whiteSpace >> lexeme expr) "Scheme" input
+parseExpr = parse (whiteSpace >> lexeme expr) "Schemini"
 
 expr :: Parser LispVal
 expr 
@@ -44,19 +49,20 @@ list :: Parser LispVal
 list = parens $ many expr >>= return . List
 
 
-eval :: LispVal -> Either LispExcept LispVal
-eval val@(Bool _) = return val
-eval val@(Integer _) = return val
-eval val@(String _) = return val
-eval (List [Atom "quote", val]) = return val
+eval :: LispVal -> ReaderT (M.Map String LispVal) (Either LispExcept) LispVal
+eval val@(Bool _) = lift $ return val
+eval val@(Integer _) = lift $ return val
+eval val@(String _) = lift $ return val
+eval (List [Atom "quote", val]) = lift $ return val
 eval (List [Atom "if", pred, conseq, alt]) = do
     result <- eval pred
     case result of
         Bool True -> eval conseq
         Bool False -> eval alt 
-        x -> throwError $ TypeMismatch "bool" x
-eval badform = throwError $ BadSpecialForm badform      
+        x -> lift $ throwError $ TypeMismatch "bool" x
+eval badform = lift $ throwError $ BadSpecialForm badform      
 
+emptyEnv = M.fromList []
 
 data LispVal 
     = Atom String
