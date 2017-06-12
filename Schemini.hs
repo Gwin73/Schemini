@@ -1,29 +1,26 @@
 import qualified Text.Parsec.Token as Tok
 import qualified Text.Parsec.Language as Lang
-import Data.Functor.Identity (Identity)
 import Text.ParserCombinators.Parsec hiding (spaces)
-
+import Data.Functor.Identity (Identity)
 import Control.Monad (forM)
  
-main = forM (  ["if", "define", "set!", "lambda", "quote" , "(if)", "(if define set!)", "'if", "'(if)"] 
+main = forM (["if", "define", "set!", "lambda", "quote" , "(if)", "(if define set!)", "'if", "'(if)"] 
     ++ ["#t", "#f", "(#t)" ,"(#t #f #f)", "(#t (#f #f))", "'#t", "'(#t #f #f)"] 
     ++ ["123", "()", "(1)" ,"(1 2 3)", "(1 (2 3))", "'1", "'(1 2 3)"] 
     ++ ["\"asd\"", "\"\\\"asd\\\"\"", "\"\\\\asd\\\\\"", "(\"asd\")" ,"(\"asd\" \"asd\" \"asd\")", "(\"asd\" (\"asd\" \"asd\"))", "'\"asd\"", "'(\"asd\" \"asd\" \"asd\")"]) 
     (putStrLn . show . parseExpr)
 
-parseExpr :: String -> String
-parseExpr input = case parse expr "Scheme" input of 
-    Left err -> show err
-    Right val -> show val
+parseExpr :: String -> Either ParseError LispVal
+parseExpr input = parse (lexeme expr) "Scheme" input
 
 expr :: Parser LispVal
 expr 
-      =  atom      
-     <|> bool
-     <|> integer
-     <|> string'
-     <|> quoted
-     <|> list
+    =  atom      
+    <|> bool
+    <|> integer
+    <|> string'
+    <|> quoted
+    <|> list
 
 atom :: Parser LispVal
 atom = identifier >>= (return . Atom)
@@ -44,7 +41,6 @@ quoted = lexeme $ string "'" >> expr >>= \x -> return $ List [Atom "quote", x]
 list :: Parser LispVal
 list = parens $ many expr >>= return . List
 
-
 data LispVal 
     = Atom String
     | Bool Bool
@@ -59,10 +55,7 @@ instance Show LispVal where
         Bool False -> "Bool: #f"
         Integer n -> "Integer: " ++ show n
         String s -> "String: " ++ "\"" ++ s ++ "\""
-        List l -> "List: " ++ "(" ++ (unwords . map show) l ++ ")"          
-
-lexer :: Tok.GenTokenParser String () Identity
-lexer = Tok.makeTokenParser schemeDef
+        List l -> "List: " ++ "(" ++ (unwords . map show) l ++ ")"    
 
 Tok.TokenParser {Tok.parens = parens, Tok.identifier = identifier, Tok.reserved = reserved, Tok.lexeme = lexeme, Tok.reservedOp = reservedOp} = 
     Tok.makeTokenParser schemeDef  
