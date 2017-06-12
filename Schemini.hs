@@ -7,12 +7,10 @@ import Control.Monad.Except
  
 main = forM (["if", "'if", "#t", "'#t", "123", "'123", "\"asd\"", "'\"asd\"", "()", "'()", "'(asd (2 \"asd\"))"]
     ++ ["(if #t 1 2)", "(if #f 1 2)"] ++ ["\" \\\\asd\\\\ \""]) 
-    (putStrLn . show . parseExpr)
+    (print . interp)
 
-readExpr :: String -> Either LispExcept LispVal
-readExpr input = case parseExpr input of
-    Left err -> throwError $ ParseExcept err
-    Right val -> interp val
+interp :: String -> Either LispExcept LispVal
+interp input = either (throwError . ParseExcept) (eval) (parseExpr input)
 
 parseExpr :: String -> Either ParseError LispVal
 parseExpr input = parse (whiteSpace >> lexeme expr) "Scheme" input
@@ -46,18 +44,18 @@ list :: Parser LispVal
 list = parens $ many expr >>= return . List
 
 
-interp :: LispVal -> Either LispExcept LispVal
-interp val@(Bool _) = return val
-interp val@(Integer _) = return val
-interp val@(String _) = return val
-interp (List [Atom "quote", val]) = return val
-interp (List [Atom "if", pred, conseq, alt]) = do
-    result <- interp pred
+eval :: LispVal -> Either LispExcept LispVal
+eval val@(Bool _) = return val
+eval val@(Integer _) = return val
+eval val@(String _) = return val
+eval (List [Atom "quote", val]) = return val
+eval (List [Atom "if", pred, conseq, alt]) = do
+    result <- eval pred
     case result of
-        Bool True -> interp conseq
-        Bool False -> interp alt 
+        Bool True -> eval conseq
+        Bool False -> eval alt 
         x -> throwError $ TypeMismatch "bool" x
-interp badform = throwError $ BadSpecialForm badform      
+eval badform = throwError $ BadSpecialForm badform      
 
 
 data LispVal 
@@ -80,13 +78,12 @@ data LispExcept
     = TypeMismatch String LispVal
     | BadSpecialForm LispVal
     | ParseExcept ParseError
-    | OtherExcept String
 
 instance Show LispExcept where 
     show e = case e of
         TypeMismatch expected found -> "Invalid type: expected " ++ expected ++ ", found " ++ show found
         BadSpecialForm form -> "Unrecognized special form: " ++ show form
-        OtherExcept msg -> msg 
+        ParseExcept err -> "ParseError: " ++ show err
 
 Tok.TokenParser {Tok.parens = parens, Tok.identifier = identifier, Tok.reserved = reserved, Tok.lexeme = lexeme, Tok.reservedOp = reservedOp, Tok.whiteSpace = whiteSpace} = 
     Tok.makeTokenParser schemeDef  
