@@ -3,15 +3,19 @@ import qualified Text.Parsec.Language as Lang
 import Text.ParserCombinators.Parsec hiding (spaces)
 import Data.Functor.Identity (Identity)
 import Control.Monad (forM)
+import Control.Monad.Except
  
-main = forM (["if", "define", "set!", "lambda", "quote" , "(if)", "(if define set!)", "'if", "'(if)"] 
-    ++ ["#t", "#f", "(#t)" ,"(#t #f #f)", "(#t (#f #f))", "'#t", "'(#t #f #f)"] 
-    ++ ["123", "()", "(1)" ,"(1 2 3)", "(1 (2 3))", "'1", "'(1 2 3)"] 
-    ++ ["\"asd\"", "\"\\\"asd\\\"\"", "\"\\\\asd\\\\\"", "(\"asd\")" ,"(\"asd\" \"asd\" \"asd\")", "(\"asd\" (\"asd\" \"asd\"))", "'\"asd\"", "'(\"asd\" \"asd\" \"asd\")"]) 
+main = forM (["if", "'if", "#t", "'#t", "123", "'123", "\"asd\"", "'\"asd\"", "()", "'()", "'(asd (2 \"asd\"))"]
+    ++ ["(if #t 1 2)", "(if #f 1 2)"] ++ ["\" \\\\asd\\\\ \""]) 
     (putStrLn . show . parseExpr)
 
+readExpr :: String -> Either LispExcept LispVal
+readExpr input = case parseExpr input of
+    Left err -> throwError $ ParseExcept err
+    Right val -> interp val
+
 parseExpr :: String -> Either ParseError LispVal
-parseExpr input = parse (lexeme expr) "Scheme" input
+parseExpr input = parse (whiteSpace >> lexeme expr) "Scheme" input
 
 expr :: Parser LispVal
 expr 
@@ -32,7 +36,7 @@ integer :: Parser LispVal
 integer = lexeme $ many1 digit >>= return . Integer . read
 
 string' :: Parser LispVal
-string' = lexeme $ between (char '\"') (char '\"') (many (escapeChar <|> noneOf ['\"', '\\'])) >>= (return . String)
+string' = lexeme $ between (char '\"') (char '\"') (many (try escapeChar <|> noneOf ['\"', '\\'])) >>= (return . String)
     where escapeChar = char '\\' >> oneOf ['\\', '"'] >>= return
 
 quoted :: Parser LispVal
@@ -40,6 +44,21 @@ quoted = lexeme $ string "'" >> expr >>= \x -> return $ List [Atom "quote", x]
 
 list :: Parser LispVal
 list = parens $ many expr >>= return . List
+
+
+interp :: LispVal -> Either LispExcept LispVal
+interp val@(Bool _) = return val
+interp val@(Integer _) = return val
+interp val@(String _) = return val
+interp (List [Atom "quote", val]) = return val
+interp (List [Atom "if", pred, conseq, alt]) = do
+    result <- interp pred
+    case result of
+        Bool True -> interp conseq
+        Bool False -> interp alt 
+        x -> throwError $ TypeMismatch "bool" x
+interp badform = throwError $ BadSpecialForm badform      
+
 
 data LispVal 
     = Atom String
@@ -57,7 +76,19 @@ instance Show LispVal where
         String s -> "String: " ++ "\"" ++ s ++ "\""
         List l -> "List: " ++ "(" ++ (unwords . map show) l ++ ")"    
 
-Tok.TokenParser {Tok.parens = parens, Tok.identifier = identifier, Tok.reserved = reserved, Tok.lexeme = lexeme, Tok.reservedOp = reservedOp} = 
+data LispExcept
+    = TypeMismatch String LispVal
+    | BadSpecialForm LispVal
+    | ParseExcept ParseError
+    | OtherExcept String
+
+instance Show LispExcept where 
+    show e = case e of
+        TypeMismatch expected found -> "Invalid type: expected " ++ expected ++ ", found " ++ show found
+        BadSpecialForm form -> "Unrecognized special form: " ++ show form
+        OtherExcept msg -> msg 
+
+Tok.TokenParser {Tok.parens = parens, Tok.identifier = identifier, Tok.reserved = reserved, Tok.lexeme = lexeme, Tok.reservedOp = reservedOp, Tok.whiteSpace = whiteSpace} = 
     Tok.makeTokenParser schemeDef  
 
 schemeDef :: Tok.GenLanguageDef String () Identity
