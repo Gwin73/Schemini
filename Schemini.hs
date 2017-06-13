@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 import qualified Text.Parsec.Token as Tok
 import qualified Text.Parsec.Language as Lang
 import Text.ParserCombinators.Parsec hiding (spaces)
@@ -8,7 +9,7 @@ import qualified Data.Map as M
 import Control.Monad.Reader
  
 main = forM (["if", "'if", "#t", "'#t", "123", "'123", "\"asd\"", "'\"asd\"", "()", "'()", "'(asd (2 \"asd\"))"]
-    ++ ["(if #t 1 2)", "(if #f 1 2)"] ++ ["pi"]) 
+    ++ ["(if #t 1 2)", "(if #f 1 2)"] ++ ["pi"] ++ ["(* 2 3)", "(* 2)", "(*)", "(1 2 3)"]) 
     (print . interp)
 
 interp :: String -> Either LispExcept LispVal
@@ -65,9 +66,23 @@ eval (List [Atom "if", pred, conseq, alt]) = do
         Bool True -> eval conseq
         Bool False -> eval alt 
         x -> lift $ throwError $ TypeMismatch "bool" x
+eval (List (proc : args)) = do
+    p <- eval proc
+    as <- mapM eval args
+    applyProc p as
 eval badform = lift $ throwError $ BadSpecialForm badform      
 
-emptyEnv = M.fromList [("pi", Integer 3)]
+applyProc (PProcedure f) params = lift $ f params
+applyProc notP _ = lift $ throwError $ TypeMismatch "procedure" notP
+
+
+times :: [LispVal] -> Either LispExcept LispVal
+times [] = throwError $ NumArgs 2 []
+times s@[_] = throwError $ NumArgs 2 s
+times [(Integer a), (Integer b)] = return $ Integer $ a * b
+
+
+emptyEnv = M.fromList [("pi", Integer 3), ("*", PProcedure times)]
 
 data LispVal 
     = Atom String
@@ -75,6 +90,7 @@ data LispVal
     | Integer Integer
     | String String
     | List [LispVal]
+    | PProcedure ([LispVal] -> Either LispExcept LispVal)
 
 instance Show LispVal where
     show v = case v of
@@ -83,10 +99,12 @@ instance Show LispVal where
         Bool False -> "Bool: #f"
         Integer n -> "Integer: " ++ show n
         String s -> "String: " ++ "\"" ++ s ++ "\""
-        List l -> "List: " ++ "(" ++ (unwords . map show) l ++ ")"    
+        List l -> "List: " ++ "(" ++ (unwords . map show) l ++ ")"
+        PProcedure _ -> "<Standard procedure>"    
 
 data LispExcept
     = TypeMismatch String LispVal
+    | NumArgs Int [LispVal]
     | UnboundVar String String
     | BadSpecialForm LispVal
     | ParseExcept ParseError
@@ -94,6 +112,7 @@ data LispExcept
 instance Show LispExcept where 
     show e = case e of
         TypeMismatch expected found -> "Invalid type: expected " ++ expected ++ ", found " ++ show found
+        NumArgs expected found -> "Wrong number of arguments: expected " ++ show expected ++ ", found " ++ show found
         UnboundVar message varname -> message ++ ": " ++ varname
         BadSpecialForm form -> "Unrecognized special form: " ++ show form
         ParseExcept err -> "ParseError: " ++ show err
