@@ -9,7 +9,9 @@ import qualified Data.Map as M
 import Control.Monad.Reader
  
 main = forM (["if", "'if", "#t", "'#t", "123", "'123", "\"asd\"", "'\"asd\"", "()", "'()", "'(asd (2 \"asd\"))"]
-    ++ ["(if #t 1 2)", "(if #f 1 2)"] ++ ["pi"] ++ ["(+ 1 2 3)", "(- 1 2 3)", "(* 1 2 3)", "(/ 1 2 3)", "(mod 3 2)", "(* 2)", "(*)", "(1 2 3)"]) 
+    ++ ["(if #t 1 2)", "(if #f 1 2)"] ++ ["pi"] ++ ["(+ 1 2)", "(- 1 2)", "(* 1 2)", "(/ 1 2)", "(mod 3 2)", "(+ 1 2 3)", "(* 2)", "(*)", "(1 2 3)"]
+    ++ ["(and #t #t)", "(and #t #f)", "(and #f #f)", "(or #t #t)", "(or #t #f)", "(or #f #f)", "(and #t #t #t)", "(and #t)", "(and)"]
+    ++ ["(= 1 3)", "(= 1 1)", "(> 1 3)", "(>= 1 3)", "(< 1 3)", "(<= 1 3)", "(= 1 1 1)", "(=)", "(= 1)"]) 
     (print . interp)
 
 interp :: String -> Either LispExcept LispVal
@@ -49,6 +51,16 @@ quoted = lexeme $ string "'" >> expr >>= \x -> return $ List [Atom "quote", x]
 list :: Parser LispVal
 list = parens $ many expr >>= return . List
 
+Tok.TokenParser {Tok.parens = parens, Tok.identifier = identifier, Tok.reserved = reserved, Tok.lexeme = lexeme, Tok.reservedOp = reservedOp, Tok.whiteSpace = whiteSpace} = 
+    Tok.makeTokenParser schemeDef  
+
+schemeDef :: Tok.GenLanguageDef String () Identity
+schemeDef = Lang.emptyDef 
+    { Tok.identStart = letter <|> oneOf "!$%&*/:<=>?^_~+-" --Not entirely correct in r5rs an identifier is Tok.identifier or + or - or ...
+    , Tok.identLetter = digit <|> Tok.identStart schemeDef
+    , Tok.reservedNames = ["#t", "#f", "'"]
+    }
+
 
 eval :: LispVal -> ReaderT (M.Map String LispVal) (Either LispExcept) LispVal
 eval (Atom var) = do
@@ -76,14 +88,27 @@ applyProc (PProcedure f) params = lift $ f params
 applyProc notP _ = lift $ throwError $ TypeMismatch "procedure" notP
 
 
-intIntOp :: (Integer -> Integer -> Integer) -> [LispVal] -> Either LispExcept LispVal
-intIntOp _ [] = throwError $ NumArgs 2 []
-intIntOp _ s@[_] = throwError $ NumArgs 2 s
-intIntOp op params = mapM unpackInteger params >>= return . Integer . foldl1 op
+intIntOp = op Integer unpackInteger
+boolBoolOp = op Bool unpackBool
+
+op :: (a -> LispVal) -> (LispVal -> Either LispExcept a) -> (a -> a -> a) -> [LispVal] -> Either LispExcept LispVal
+op _ _ _ [] = throwError $ NumArgs 2 []
+op _ _ _ s@[_] = throwError $ NumArgs 2 s
+op packer unpacker op params = mapM unpacker params >>= return . packer . foldl1 op
+
+intBoolOp :: (Integer -> Integer -> Bool) -> [LispVal] -> Either LispExcept LispVal
+intBoolOp _ [] = throwError $ NumArgs 2 []
+intBoolOp _ s@[_] = throwError $ NumArgs 2 s
+intBoolOp op params = mapM unpackInteger params >>= \x -> return $ Bool $ and (zipWith (op) (x) (tail x))
 
 unpackInteger :: LispVal -> Either LispExcept Integer
 unpackInteger (Integer n) = return n
 unpackInteger notInt = throwError $ TypeMismatch "integer" notInt
+
+unpackBool :: LispVal -> Either LispExcept Bool
+unpackBool (Bool b) = return b
+unpackBool notBool = throwError $ TypeMismatch "bool" notBool
+
 
 emptyEnv = M.fromList 
     [("pi", Integer 3), 
@@ -91,7 +116,14 @@ emptyEnv = M.fromList
     ("-", PProcedure $ intIntOp (-)), 
     ("*", PProcedure $ intIntOp (*)), 
     ("/", PProcedure $ intIntOp div),
-    ("mod", PProcedure $ intIntOp mod)
+    ("mod", PProcedure $ intIntOp mod),
+    ("=", PProcedure $ intBoolOp (==)),
+    (">", PProcedure $ intBoolOp (>)),
+    (">=", PProcedure $ intBoolOp (>=)),
+    ("<", PProcedure $ intBoolOp (<)),
+    ("<=", PProcedure $ intBoolOp (<=)),
+    ("and", PProcedure $ boolBoolOp (&&)),
+    ("or", PProcedure $ boolBoolOp (||))
     ]
 
 data LispVal 
@@ -126,13 +158,3 @@ instance Show LispExcept where
         UnboundVar message varname -> message ++ ": " ++ varname
         BadSpecialForm form -> "Unrecognized special form: " ++ show form
         ParseExcept err -> "ParseError: " ++ show err
-
-Tok.TokenParser {Tok.parens = parens, Tok.identifier = identifier, Tok.reserved = reserved, Tok.lexeme = lexeme, Tok.reservedOp = reservedOp, Tok.whiteSpace = whiteSpace} = 
-    Tok.makeTokenParser schemeDef  
-
-schemeDef :: Tok.GenLanguageDef String () Identity
-schemeDef = Lang.emptyDef 
-    { Tok.identStart = letter <|> oneOf "!$%&*/:<=>?^_~+-" --Not entirely correct in r5rs an identifier is Tok.identifier or + or -
-    , Tok.identLetter = digit <|> Tok.identStart schemeDef
-    , Tok.reservedNames = ["#t", "#f", "'"]
-    }
