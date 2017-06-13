@@ -9,7 +9,7 @@ import qualified Data.Map as M
 import Control.Monad.Reader
  
 main = forM (["if", "'if", "#t", "'#t", "123", "'123", "\"asd\"", "'\"asd\"", "()", "'()", "'(asd (2 \"asd\"))"]
-    ++ ["(if #t 1 2)", "(if #f 1 2)"] ++ ["pi"] ++ ["(* 2 3)", "(* 2)", "(*)", "(1 2 3)"]) 
+    ++ ["(if #t 1 2)", "(if #f 1 2)"] ++ ["pi"] ++ ["(+ 1 2 3)", "(- 1 2 3)", "(* 1 2 3)", "(/ 1 2 3)", "(mod 3 2)", "(* 2)", "(*)", "(1 2 3)"]) 
     (print . interp)
 
 interp :: String -> Either LispExcept LispVal
@@ -76,13 +76,23 @@ applyProc (PProcedure f) params = lift $ f params
 applyProc notP _ = lift $ throwError $ TypeMismatch "procedure" notP
 
 
-times :: [LispVal] -> Either LispExcept LispVal
-times [] = throwError $ NumArgs 2 []
-times s@[_] = throwError $ NumArgs 2 s
-times [(Integer a), (Integer b)] = return $ Integer $ a * b
+intIntOp :: (Integer -> Integer -> Integer) -> [LispVal] -> Either LispExcept LispVal
+intIntOp _ [] = throwError $ NumArgs 2 []
+intIntOp _ s@[_] = throwError $ NumArgs 2 s
+intIntOp op params = mapM unpackInteger params >>= return . Integer . foldl1 op
 
+unpackInteger :: LispVal -> Either LispExcept Integer
+unpackInteger (Integer n) = return n
+unpackInteger notInt = throwError $ TypeMismatch "integer" notInt
 
-emptyEnv = M.fromList [("pi", Integer 3), ("*", PProcedure times)]
+emptyEnv = M.fromList 
+    [("pi", Integer 3), 
+    ("+", PProcedure $ intIntOp (+)), 
+    ("-", PProcedure $ intIntOp (-)), 
+    ("*", PProcedure $ intIntOp (*)), 
+    ("/", PProcedure $ intIntOp div),
+    ("mod", PProcedure $ intIntOp mod)
+    ]
 
 data LispVal 
     = Atom String
@@ -122,7 +132,7 @@ Tok.TokenParser {Tok.parens = parens, Tok.identifier = identifier, Tok.reserved 
 
 schemeDef :: Tok.GenLanguageDef String () Identity
 schemeDef = Lang.emptyDef 
-    { Tok.identStart = letter <|> oneOf "!$%&*/:<=>?^_~"
+    { Tok.identStart = letter <|> oneOf "!$%&*/:<=>?^_~+-" --Not entirely correct in r5rs an identifier is Tok.identifier or + or -
     , Tok.identLetter = digit <|> Tok.identStart schemeDef
     , Tok.reservedNames = ["#t", "#f", "'"]
     }
