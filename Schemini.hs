@@ -8,7 +8,7 @@ import qualified Data.Map as M
 import Control.Monad.Reader
  
 main = forM (["if", "'if", "#t", "'#t", "123", "'123", "\"asd\"", "'\"asd\"", "()", "'()", "'(asd (2 \"asd\"))"]
-    ++ ["(if #t 1 2)", "(if #f 1 2)"] ++ ["\" \\\\asd\\\\ \""]) 
+    ++ ["(if #t 1 2)", "(if #f 1 2)"] ++ ["pi"]) 
     (print . interp)
 
 interp :: String -> Either LispExcept LispVal
@@ -50,6 +50,11 @@ list = parens $ many expr >>= return . List
 
 
 eval :: LispVal -> ReaderT (M.Map String LispVal) (Either LispExcept) LispVal
+eval (Atom var) = do
+    env <- ask
+    case M.lookup var env of
+        Nothing -> lift $ throwError $ UnboundVar "Getting unbound variable" var
+        Just x -> lift $ return x 
 eval val@(Bool _) = lift $ return val
 eval val@(Integer _) = lift $ return val
 eval val@(String _) = lift $ return val
@@ -62,7 +67,7 @@ eval (List [Atom "if", pred, conseq, alt]) = do
         x -> lift $ throwError $ TypeMismatch "bool" x
 eval badform = lift $ throwError $ BadSpecialForm badform      
 
-emptyEnv = M.fromList []
+emptyEnv = M.fromList [("pi", Integer 3)]
 
 data LispVal 
     = Atom String
@@ -82,12 +87,14 @@ instance Show LispVal where
 
 data LispExcept
     = TypeMismatch String LispVal
+    | UnboundVar String String
     | BadSpecialForm LispVal
     | ParseExcept ParseError
 
 instance Show LispExcept where 
     show e = case e of
         TypeMismatch expected found -> "Invalid type: expected " ++ expected ++ ", found " ++ show found
+        UnboundVar message varname -> message ++ ": " ++ varname
         BadSpecialForm form -> "Unrecognized special form: " ++ show form
         ParseExcept err -> "ParseError: " ++ show err
 
