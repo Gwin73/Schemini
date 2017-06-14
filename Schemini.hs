@@ -9,18 +9,15 @@ import qualified Data.Map as M
 import Control.Monad.Reader
  
 main = forM (["if", "'if", "#t", "'#t", "123", "'123", "\"asd\"", "'\"asd\"", "()", "'()", "'(asd (2 \"asd\"))"]
-    ++ ["(if #t 1 2)", "(if #f 1 2)", "(lambda (x y) (+ x y))", "((lambda (x y) (+ x y)) 1 3)"] ++ ["pi"] 
-    ++ ["(+ 1 2)", "(- 1 2)", "(* 1 2)", "(/ 1 2)", "(mod 3 2)", "(+ 1 2 3)", "(* 2)", "(*)", "(1 2 3)"]
-    ++ ["(= 1 3)", "(= 1 1)", "(> 1 3)", "(>= 1 3)", "(< 1 3)", "(<= 1 3)", "(= 1 1 1)", "(=)", "(= 1)"]
-    ++ ["(and #t #t)", "(and #t #f)", "(and #f #f)", "(or #t #t)", "(or #t #f)", "(or #f #f)", "(and #t #t #t)", "(and #t)", "(and)"]
-    ++ ["(car '())", "(car '(1))", "(car '(1 2 3))", "(cdr '())", "(cdr '(1))", "(cdr '(1 2 3))", "(cons 1 '())", "(cons 1 '(2 3))", "(cons '() 1)"]
-    )
-    (print . interp)
+    ++ ["(if #t 1 2)", "(if #f 1 2)", "(lambda (x y) (+ x y))", "((lambda (x y) (+ x y)) 1 3)"]
+    ++ ["((define a 'asd) a)", "((define true #t) true)", "((define one 1) one)", "((define greeting \"hello\") greeting)", "((define nil '()) nil)", "((define plus (lambda (x y) (+ x y))) (plus 1 2))", "((define a 'asd))", "((define a 'qwert) a)"]   
+    ++ ["((define a (+ 1 2)) a)", "((define a 1) (define b 2))", "((1) (2))", "((define a 1) a 1)"])
+    (print . parseExpr)
 
 interp :: String -> Either LispExcept LispVal
 interp input = either 
         (throwError . ParseExcept) 
-        (\x -> runReaderT (eval x) stdEnv) 
+        (\x -> runReaderT (evalExprList x) stdEnv) 
         (parseExpr input)
 
 parseExpr :: String -> Either ParseError LispVal
@@ -64,6 +61,16 @@ schemeDef = Lang.emptyDef
     , Tok.reservedNames = ["#t", "#f", "'"]
     }
 
+evalExprList :: LispVal -> ReaderT (M.Map String LispVal) (Either LispExcept) LispVal
+evalExprList (List ((List [Atom "define", Atom var, expr] : rest))) = do
+    env <- ask
+    val <- eval expr
+    let envFunc = (const $ M.insert var val env) in
+        (case rest of
+            [] -> lift $ return $ List []
+            [x] -> local envFunc (evalExprList x)
+            x -> local envFunc (evalExprList $ List x))
+evalExprList x = eval x
 
 eval :: LispVal -> ReaderT (M.Map String LispVal) (Either LispExcept) LispVal
 eval (Atom var) = do
@@ -98,6 +105,24 @@ applyProc (Procedure params body env) args = do
         else local (const $ M.fromList (zip params args) `M.union` env) (liftM last $ mapM eval body)
 applyProc notP _ = lift $ throwError $ TypeMismatch "procedure" notP
 
+
+stdEnv = M.fromList 
+    [("+", PProcedure $ intIntOp (+)), 
+    ("-", PProcedure $ intIntOp (-)), 
+    ("*", PProcedure $ intIntOp (*)), 
+    ("/", PProcedure $ intIntOp div),
+    ("mod", PProcedure $ intIntOp mod),
+    ("=", PProcedure $ intBoolOp (==)),
+    (">", PProcedure $ intBoolOp (>)),
+    (">=", PProcedure $ intBoolOp (>=)),
+    ("<", PProcedure $ intBoolOp (<)),
+    ("<=", PProcedure $ intBoolOp (<=)),
+    ("and", PProcedure $ boolBoolOp (&&)),
+    ("or", PProcedure $ boolBoolOp (||)),
+    ("car", PProcedure car),
+    ("cdr", PProcedure cdr),
+    ("cons", PProcedure cons)
+    ]
 
 intIntOp = op Integer unpackInteger
 boolBoolOp = op Bool unpackBool
@@ -134,25 +159,6 @@ cons :: [LispVal] -> Either LispExcept LispVal
 cons [x, List xs] = return $ List $ x : xs
 cons [_, arg2] = throwError $ TypeMismatch "list" arg2
 cons badArgs = throwError $ NumArgs 2 badArgs
-
-stdEnv = M.fromList 
-    [("pi", Integer 3), 
-    ("+", PProcedure $ intIntOp (+)), 
-    ("-", PProcedure $ intIntOp (-)), 
-    ("*", PProcedure $ intIntOp (*)), 
-    ("/", PProcedure $ intIntOp div),
-    ("mod", PProcedure $ intIntOp mod),
-    ("=", PProcedure $ intBoolOp (==)),
-    (">", PProcedure $ intBoolOp (>)),
-    (">=", PProcedure $ intBoolOp (>=)),
-    ("<", PProcedure $ intBoolOp (<)),
-    ("<=", PProcedure $ intBoolOp (<=)),
-    ("and", PProcedure $ boolBoolOp (&&)),
-    ("or", PProcedure $ boolBoolOp (||)),
-    ("car", PProcedure car),
-    ("cdr", PProcedure cdr),
-    ("cons", PProcedure cons)
-    ]
 
 data LispVal 
     = Atom String
