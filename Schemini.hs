@@ -11,13 +11,14 @@ import Control.Monad.Reader
 main = forM (["if", "'if", "#t", "'#t", "123", "'123", "\"asd\"", "'\"asd\"", "()", "'()", "'(asd (2 \"asd\"))"]
     ++ ["(if #t 1 2)", "(if #f 1 2)"] ++ ["pi"] ++ ["(+ 1 2)", "(- 1 2)", "(* 1 2)", "(/ 1 2)", "(mod 3 2)", "(+ 1 2 3)", "(* 2)", "(*)", "(1 2 3)"]
     ++ ["(and #t #t)", "(and #t #f)", "(and #f #f)", "(or #t #t)", "(or #t #f)", "(or #f #f)", "(and #t #t #t)", "(and #t)", "(and)"]
-    ++ ["(= 1 3)", "(= 1 1)", "(> 1 3)", "(>= 1 3)", "(< 1 3)", "(<= 1 3)", "(= 1 1 1)", "(=)", "(= 1)"]) 
+    ++ ["(= 1 3)", "(= 1 1)", "(> 1 3)", "(>= 1 3)", "(< 1 3)", "(<= 1 3)", "(= 1 1 1)", "(=)", "(= 1)"]
+    ++ ["(lambda (x y) (+ x y))", "((lambda (x y) (+ x y)) 1 3)"])
     (print . interp)
 
 interp :: String -> Either LispExcept LispVal
 interp input = either 
         (throwError . ParseExcept) 
-        (\x -> runReaderT (eval x) emptyEnv) 
+        (\x -> runReaderT (eval x) stdEnv) 
         (parseExpr input)
 
 parseExpr :: String -> Either ParseError LispVal
@@ -78,13 +79,21 @@ eval (List [Atom "if", pred, conseq, alt]) = do
         Bool True -> eval conseq
         Bool False -> eval alt 
         x -> lift $ throwError $ TypeMismatch "bool" x
+eval (List (Atom "lambda" : List params : body)) = do
+    env <- ask
+    lift $ return $ Procedure (map show params) body env
 eval (List (proc : args)) = do
     p <- eval proc
     as <- mapM eval args
     applyProc p as
-eval badform = lift $ throwError $ BadSpecialForm badform      
+eval badform = lift $ throwError $ BadSpecialForm badform  
 
-applyProc (PProcedure f) params = lift $ f params
+applyProc :: LispVal -> [LispVal] -> ReaderT (M.Map String LispVal) (Either LispExcept) LispVal
+applyProc (PProcedure f) args = lift $ f args
+applyProc (Procedure params body env) args = do
+    if length params /= length args
+        then lift $ throwError $ NumArgs (length params) args
+        else local (const $ M.fromList (zip params args) `M.union` env) (liftM last $ mapM eval body)
 applyProc notP _ = lift $ throwError $ TypeMismatch "procedure" notP
 
 
@@ -110,7 +119,7 @@ unpackBool (Bool b) = return b
 unpackBool notBool = throwError $ TypeMismatch "bool" notBool
 
 
-emptyEnv = M.fromList 
+stdEnv = M.fromList 
     [("pi", Integer 3), 
     ("+", PProcedure $ intIntOp (+)), 
     ("-", PProcedure $ intIntOp (-)), 
@@ -133,16 +142,18 @@ data LispVal
     | String String
     | List [LispVal]
     | PProcedure ([LispVal] -> Either LispExcept LispVal)
+    | Procedure [String] [LispVal] (M.Map String LispVal)
 
 instance Show LispVal where
     show v = case v of
-        Atom s -> "Atom: " ++ s
-        Bool True -> "Bool: #t"
-        Bool False -> "Bool: #f"
-        Integer n -> "Integer: " ++ show n
-        String s -> "String: " ++ "\"" ++ s ++ "\""
-        List l -> "List: " ++ "(" ++ (unwords . map show) l ++ ")"
-        PProcedure _ -> "<Standard procedure>"    
+        Atom s -> s
+        Bool True -> "#t"
+        Bool False -> "#f"
+        Integer n -> show n
+        String s -> "\"" ++ s ++ "\""
+        List l -> "(" ++ (unwords . map show) l ++ ")"
+        PProcedure _ -> "<Standard procedure>"  
+        Procedure p _ c -> "<Lambda>"
 
 data LispExcept
     = TypeMismatch String LispVal
