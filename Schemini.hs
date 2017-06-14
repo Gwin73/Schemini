@@ -9,10 +9,12 @@ import qualified Data.Map as M
 import Control.Monad.Reader
  
 main = forM (["if", "'if", "#t", "'#t", "123", "'123", "\"asd\"", "'\"asd\"", "()", "'()", "'(asd (2 \"asd\"))"]
-    ++ ["(if #t 1 2)", "(if #f 1 2)"] ++ ["pi"] ++ ["(+ 1 2)", "(- 1 2)", "(* 1 2)", "(/ 1 2)", "(mod 3 2)", "(+ 1 2 3)", "(* 2)", "(*)", "(1 2 3)"]
-    ++ ["(and #t #t)", "(and #t #f)", "(and #f #f)", "(or #t #t)", "(or #t #f)", "(or #f #f)", "(and #t #t #t)", "(and #t)", "(and)"]
+    ++ ["(if #t 1 2)", "(if #f 1 2)", "(lambda (x y) (+ x y))", "((lambda (x y) (+ x y)) 1 3)"] ++ ["pi"] 
+    ++ ["(+ 1 2)", "(- 1 2)", "(* 1 2)", "(/ 1 2)", "(mod 3 2)", "(+ 1 2 3)", "(* 2)", "(*)", "(1 2 3)"]
     ++ ["(= 1 3)", "(= 1 1)", "(> 1 3)", "(>= 1 3)", "(< 1 3)", "(<= 1 3)", "(= 1 1 1)", "(=)", "(= 1)"]
-    ++ ["(lambda (x y) (+ x y))", "((lambda (x y) (+ x y)) 1 3)"])
+    ++ ["(and #t #t)", "(and #t #f)", "(and #f #f)", "(or #t #t)", "(or #t #f)", "(or #f #f)", "(and #t #t #t)", "(and #t)", "(and)"]
+    ++ ["(car '())", "(car '(1))", "(car '(1 2 3))", "(cdr '())", "(cdr '(1))", "(cdr '(1 2 3))", "(cons 1 '())", "(cons 1 '(2 3))", "(cons '() 1)"]
+    )
     (print . interp)
 
 interp :: String -> Either LispExcept LispVal
@@ -118,6 +120,20 @@ unpackBool :: LispVal -> Either LispExcept Bool
 unpackBool (Bool b) = return b
 unpackBool notBool = throwError $ TypeMismatch "bool" notBool
 
+car :: [LispVal] -> Either LispExcept LispVal
+car [(List (x : xs))] = return x
+car [badArg] = throwError $ TypeMismatch "list" badArg
+car badArgs = throwError $ NumArgs 1 badArgs
+
+cdr :: [LispVal] -> Either LispExcept LispVal
+cdr [(List (x : xs))] = return $ List xs
+cdr [badArg] = throwError $ TypeMismatch "list" badArg
+cdr badArgs = throwError $ NumArgs 1 badArgs
+
+cons :: [LispVal] -> Either LispExcept LispVal
+cons [x, List xs] = return $ List $ x : xs
+cons [_, arg2] = throwError $ TypeMismatch "list" arg2
+cons badArgs = throwError $ NumArgs 2 badArgs
 
 stdEnv = M.fromList 
     [("pi", Integer 3), 
@@ -132,7 +148,10 @@ stdEnv = M.fromList
     ("<", PProcedure $ intBoolOp (<)),
     ("<=", PProcedure $ intBoolOp (<=)),
     ("and", PProcedure $ boolBoolOp (&&)),
-    ("or", PProcedure $ boolBoolOp (||))
+    ("or", PProcedure $ boolBoolOp (||)),
+    ("car", PProcedure car),
+    ("cdr", PProcedure cdr),
+    ("cons", PProcedure cons)
     ]
 
 data LispVal 
