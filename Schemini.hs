@@ -11,8 +11,8 @@ import Control.Monad.Reader
 main = forM (["if", "'if", "#t", "'#t", "123", "'123", "\"asd\"", "'\"asd\"", "()", "'()", "'(asd (2 \"asd\"))"]
     ++ ["(if #t 1 2)", "(if #f 1 2)", "(lambda (x y) (+ x y))", "((lambda (x y) (+ x y)) 1 3)"]
     ++ ["((define a 'asd) a)", "((define true #t) true)", "((define one 1) one)", "((define greeting \"hello\") greeting)", "((define nil '()) nil)", "((define plus (lambda (x y) (+ x y))) (plus 1 2))", "((define a 'asd))", "((define a 'qwert) a)"]   
-    ++ ["((define a (+ 1 2)) a)", "((define a 1) (define b 2))", "((1) (2))", "((define a 1) a 1)"])
-    (print . parseExpr)
+    ++ ["((define a (+ 1 2)) a)", "((define a 1) (define b 2))",  "((define a 1) (define b (+ a 1)) b)"])
+    (print . interp)
 
 interp :: String -> Either LispExcept LispVal
 interp input = either 
@@ -91,6 +91,7 @@ eval (List [Atom "if", pred, conseq, alt]) = do
 eval (List (Atom "lambda" : List params : body)) = do
     env <- ask
     lift $ return $ Procedure (map show params) body env
+eval (List [Atom "define", Atom var, expr]) = eval expr
 eval (List (proc : args)) = do
     p <- eval proc
     as <- mapM eval args
