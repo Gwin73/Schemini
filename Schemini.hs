@@ -8,11 +8,8 @@ import Control.Monad.Except
 import qualified Data.Map as M
 import Control.Monad.Reader
  
-main = forM (["if", "'if", "#t", "'#t", "123", "'123", "\"asd\"", "'\"asd\"", "()", "'()", "'(asd (2 \"asd\"))"]
-    ++ ["(if #t 1 2)", "(if #f 1 2)", "(lambda (x y) (+ x y))", "((lambda (x y) (+ x y)) 1 3)"]
-    ++ ["((define a 'asd) a)", "((define true #t) true)", "((define one 1) one)", "((define greeting \"hello\") greeting)", "((define nil '()) nil)", "((define plus (lambda (x y) (+ x y))) (plus 1 2))", "((define a 'asd))", "((define a 'qwert) a)"]   
-    ++ ["((define a (+ 1 2)) a)", "((define a 1) (define b 2))",  "((define a 1) (define b (+ a 1)) b)"])
-    (print . interp)
+main = forM (["(integer? 1)", "(integer? #t)", "(boolean? #t)", "(boolean? 1)", "(string? \"asd\")" , "(string? 1)", "(string-append \"a\" \"s\" \"d\")", "(string-length \"asd\")"])
+    (putStrLn . (either show show) . interp)
 
 interp :: String -> Either LispExcept LispVal
 interp input = either 
@@ -61,7 +58,7 @@ schemeDef = Lang.emptyDef
     , Tok.reservedNames = ["#t", "#f", "'"]
     }
 
-evalExprList :: LispVal -> ReaderT (M.Map String LispVal) (Either LispExcept) LispVal
+evalExprList :: LispVal -> ReaderT Env (Either LispExcept) LispVal
 evalExprList (List ((List [Atom "define", Atom var, expr] : rest))) = do
     env <- ask
     val <- eval expr
@@ -72,7 +69,7 @@ evalExprList (List ((List [Atom "define", Atom var, expr] : rest))) = do
             x -> local envFunc (evalExprList $ List x))
 evalExprList x = eval x
 
-eval :: LispVal -> ReaderT (M.Map String LispVal) (Either LispExcept) LispVal
+eval :: LispVal -> ReaderT Env (Either LispExcept) LispVal
 eval (Atom var) = do
     env <- ask
     case M.lookup var env of
@@ -98,7 +95,7 @@ eval (List (proc : args)) = do
     applyProc p as
 eval badform = lift $ throwError $ BadSpecialForm badform  
 
-applyProc :: LispVal -> [LispVal] -> ReaderT (M.Map String LispVal) (Either LispExcept) LispVal
+applyProc :: LispVal -> [LispVal] -> ReaderT Env (Either LispExcept) LispVal
 applyProc (PProcedure f) args = lift $ f args
 applyProc (Procedure params body env) args = do
     if length params /= length args
@@ -108,35 +105,45 @@ applyProc notP _ = lift $ throwError $ TypeMismatch "procedure" notP
 
 
 stdEnv = M.fromList 
-    [("+", PProcedure $ intIntOp (+)), 
-    ("-", PProcedure $ intIntOp (-)), 
-    ("*", PProcedure $ intIntOp (*)), 
-    ("/", PProcedure $ intIntOp div),
-    ("mod", PProcedure $ intIntOp mod),
-    ("=", PProcedure $ intBoolOp (==)),
-    (">", PProcedure $ intBoolOp (>)),
-    (">=", PProcedure $ intBoolOp (>=)),
-    ("<", PProcedure $ intBoolOp (<)),
-    ("<=", PProcedure $ intBoolOp (<=)),
-    ("and", PProcedure $ boolBoolOp (&&)),
-    ("or", PProcedure $ boolBoolOp (||)),
+    [("+", PProcedure $ intFoldop (+)), 
+    ("-", PProcedure $ intFoldop (-)), 
+    ("*", PProcedure $ intFoldop (*)), 
+    ("/", PProcedure $ intFoldop div),
+    ("mod", PProcedure $ intFoldop mod),
+    ("=", PProcedure $ intCompop (==)),
+    (">", PProcedure $ intCompop (>)),
+    (">=", PProcedure $ intCompop (>=)),
+    ("<", PProcedure $ intCompop (<)),
+    ("<=", PProcedure $ intCompop (<=)),
+    ("integer?", PProcedure $ lispvalQ unpackInteger),
+    ("and", PProcedure $ boolFoldop (&&)),
+    ("or", PProcedure $ boolFoldop (||)),
+    ("boolean?", PProcedure $ lispvalQ unpackBool),
+    ("string-append", PProcedure $ strFoldop (++)),
+    ("string-length", PProcedure $ unop Integer unpackStr (toInteger . length)),
+    ("string=?", PProcedure $ stringCompOp (==)),
+    ("string?", PProcedure $ lispvalQ unpackStr),
     ("car", PProcedure car),
     ("cdr", PProcedure cdr),
     ("cons", PProcedure cons)
     ]
 
-intIntOp = op Integer unpackInteger
-boolBoolOp = op Bool unpackBool
+intFoldop = foldop Integer unpackInteger
+boolFoldop = foldop Bool unpackBool
+strFoldop = foldop String unpackStr
 
-op :: (a -> LispVal) -> (LispVal -> Either LispExcept a) -> (a -> a -> a) -> [LispVal] -> Either LispExcept LispVal
-op _ _ _ [] = throwError $ NumArgs 2 []
-op _ _ _ s@[_] = throwError $ NumArgs 2 s
-op packer unpacker op params = mapM unpacker params >>= return . packer . foldl1 op
+foldop :: (a -> LispVal) -> (LispVal -> Either LispExcept a) -> (a -> a -> a) -> [LispVal] -> Either LispExcept LispVal
+foldop _ _ _ [] = throwError $ NumArgs 2 []
+foldop _ _ _ s@[_] = throwError $ NumArgs 2 s
+foldop packer unpacker op params = mapM unpacker params >>= return . packer . foldl1 op
 
-intBoolOp :: (Integer -> Integer -> Bool) -> [LispVal] -> Either LispExcept LispVal
-intBoolOp _ [] = throwError $ NumArgs 2 []
-intBoolOp _ s@[_] = throwError $ NumArgs 2 s
-intBoolOp op params = mapM unpackInteger params >>= \x -> return $ Bool $ and (zipWith (op) (x) (tail x))
+intCompop = compop unpackInteger
+stringCompOp = compop unpackBool 
+
+compop :: (LispVal -> Either LispExcept a) -> (a -> a -> Bool) -> [LispVal] -> Either LispExcept LispVal
+compop _ _ [] = throwError $ NumArgs 2 []
+compop _ _ s@[_] = throwError $ NumArgs 2 s
+compop unpacker op params = mapM unpacker params >>= \x -> return $ Bool $ and (zipWith (op) (x) (tail x))
 
 unpackInteger :: LispVal -> Either LispExcept Integer
 unpackInteger (Integer n) = return n
@@ -145,6 +152,10 @@ unpackInteger notInt = throwError $ TypeMismatch "integer" notInt
 unpackBool :: LispVal -> Either LispExcept Bool
 unpackBool (Bool b) = return b
 unpackBool notBool = throwError $ TypeMismatch "bool" notBool
+
+unpackStr :: LispVal -> Either LispExcept String
+unpackStr (String s) = return s
+unpackStr notStr = throwError $ TypeMismatch "string" notStr
 
 car :: [LispVal] -> Either LispExcept LispVal
 car [(List (x : xs))] = return x
@@ -161,6 +172,16 @@ cons [x, List xs] = return $ List $ x : xs
 cons [_, arg2] = throwError $ TypeMismatch "list" arg2
 cons badArgs = throwError $ NumArgs 2 badArgs
 
+lispvalQ :: (LispVal -> Either LispExcept a) -> [LispVal] -> Either LispExcept LispVal
+lispvalQ unpacker [x] = either (\x->return $ Bool False) (\x->return $ Bool True) (unpacker x)
+lispvalQ _ args = throwError $ NumArgs 2 args
+
+unop :: (b -> LispVal) -> (LispVal -> Either LispExcept a) -> (a -> b) -> [LispVal] -> Either LispExcept LispVal
+unop packer unpacker op [arg] = unpacker arg >>= return . packer . op
+unop _ _ _ badArgs = throwError $ NumArgs 1 badArgs
+
+type Env = M.Map String LispVal
+
 data LispVal 
     = Atom String
     | Bool Bool
@@ -168,7 +189,7 @@ data LispVal
     | String String
     | List [LispVal]
     | PProcedure ([LispVal] -> Either LispExcept LispVal)
-    | Procedure [String] [LispVal] (M.Map String LispVal)
+    | Procedure [String] [LispVal] Env
 
 instance Show LispVal where
     show v = case v of
