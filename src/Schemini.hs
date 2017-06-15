@@ -10,12 +10,12 @@ import Control.Monad.Reader
  
 main = forM (
     ["(cdr '(1 2))", "(print-line \"asd\")", "(print-line (read-line))"])
-    (\x -> (runExceptT $ interp x) >>= (putStrLn . show))
+    (\x -> (runExceptT $ interp x) >>= putStrLn . (either show show))
 
 interp :: String -> ExceptT LispExcept IO LispVal
 interp input = either 
         (throwError . ParseExcept) 
-        (\x -> runReaderT (evalExprList x) stdEnv) 
+        (\x -> (runReaderT (evalExprList x) stdEnv))
         (parseExpr input)
 
 parseExpr :: String -> Either ParseError LispVal
@@ -97,7 +97,8 @@ eval (List (proc : args)) = do
 eval badform = lift $ throwError $ BadSpecialForm badform  
 
 applyProc :: LispVal -> [LispVal] -> ReaderT Env (ExceptT LispExcept IO) LispVal
-applyProc (PProcedure f) args = lift $ f args
+applyProc (PProcedure f) args = either (throwError) (return) (f args) 
+applyProc (IOPProcedure f) args = lift $ f args
 applyProc (Procedure params body env) args = do
     if length params /= length args
         then lift $ throwError $ NumArgs (length params) args
@@ -106,11 +107,11 @@ applyProc notP _ = lift $ throwError $ TypeMismatch "procedure" notP
 
 
 stdEnv = M.fromList 
-    [{-("+", PProcedure $ intFoldop (+)), 
+    [("+", PProcedure $ intFoldop (+)), 
     ("-", PProcedure $ intFoldop (-)), 
     ("*", PProcedure $ intFoldop (*)), 
     ("/", PProcedure $ intFoldop div),
-    ("mod", PProcedure $ intFoldop mod)--,
+    ("mod", PProcedure $ intFoldop mod),
     ("=", PProcedure $ intCompop (==)),
     (">", PProcedure $ intCompop (>)),
     (">=", PProcedure $ intCompop (>=)),
@@ -125,13 +126,13 @@ stdEnv = M.fromList
     ("string-length", PProcedure $ unop Integer unpackStr (toInteger . length)),
     ("string=?", PProcedure $ stringCompOp (==)),
     ("string?", PProcedure $ lispvalQ unpackStr),
-    ("car", PProcedure car),-}
+    ("car", PProcedure car),
     ("cdr", PProcedure cdr),
-    ("print-line", PProcedure printLine),
-     ("read-line", PProcedure readLine)
-   -- ("cons", PProcedure cons),
-   -- ("list?", PProcedure $ lispvalQ unpackList),
-   -- ("equal?", PProcedure equal)
+    ("print-line", IOPProcedure printLine),
+    ("read-line", IOPProcedure readLine),
+    ("cons", PProcedure cons),
+    ("list?", PProcedure $ lispvalQ unpackList),
+    ("equal?", PProcedure equal)
     ]
 
 intFoldop = foldop Integer unpackInteger
@@ -176,7 +177,7 @@ car [(List (x : xs))] = return x
 car [badArg] = throwError $ TypeMismatch "list" badArg
 car badArgs = throwError $ NumArgs 1 badArgs
 
-cdr :: [LispVal] -> ExceptT LispExcept IO LispVal
+cdr :: [LispVal] -> Either LispExcept LispVal
 cdr [(List (x : xs))] = return $ List xs
 cdr [badArg] = throwError $ TypeMismatch "list" badArg
 cdr badArgs = throwError $ NumArgs 1 badArgs
@@ -215,7 +216,8 @@ data LispVal
     | Integer Integer
     | String String
     | List [LispVal]
-    | PProcedure ([LispVal] -> ExceptT LispExcept IO LispVal)
+    | PProcedure ([LispVal] -> Either LispExcept LispVal)
+    | IOPProcedure ([LispVal] -> ExceptT LispExcept IO LispVal)
     | Procedure [String] [LispVal] Env
 
 instance Show LispVal where
