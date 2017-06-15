@@ -50,7 +50,7 @@ quoted = lexeme $ string "'" >> expr >>= \x -> return $ List [Atom "quote", x]
 list :: Parser LispVal
 list = parens $ many expr >>= return . List
 
-Tok.TokenParser {Tok.parens = parens, Tok.identifier = identifier, Tok.reserved = reserved, Tok.lexeme = lexeme, Tok.reservedOp = reservedOp, Tok.whiteSpace = whiteSpace} = 
+Tok.TokenParser {Tok.parens = parens, Tok.identifier = identifier, Tok.reserved = reserved, Tok.lexeme = lexeme, Tok.whiteSpace = whiteSpace} = 
     Tok.makeTokenParser schemeDef  
 
 schemeDef :: Tok.GenLanguageDef String () Identity
@@ -197,6 +197,15 @@ equal [String s1, String s2] = return $ Bool $ s1 == s2
 equal [_, _] = return $ Bool False
 equal badArgs =  throwError $ NumArgs 2 badArgs
 
+printLine :: [LispVal] -> ExceptT LispExcept IO LispVal
+printLine [String s] = liftIO $ putStrLn s >> (return $ Bool True) 
+printLine [badArg] = throwError $ TypeMismatch "string" badArg
+printLine badArgs = throwError $ NumArgs 1 badArgs
+
+readLine :: [LispVal] -> ExceptT LispExcept IO LispVal
+readLine [] = liftIO $ getLine >>= return . String
+readLine badArgs = throwError $ NumArgs 0 badArgs
+
 type Env = M.Map String LispVal
 
 data LispVal 
@@ -217,7 +226,7 @@ instance Show LispVal where
         String s -> "\"" ++ s ++ "\""
         List l -> "(" ++ (unwords . map show) l ++ ")"
         PProcedure _ -> "<Standard procedure>"  
-        Procedure p _ c -> "<Lambda>"
+        Procedure _ _ _ -> "<Lambda>"
 
 data LispExcept
     = TypeMismatch String LispVal
