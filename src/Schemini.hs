@@ -8,7 +8,9 @@ import Control.Monad.Except
 import qualified Data.Map as M
 import Control.Monad.Reader
  
-main = forM (["(integer? 1)", "(integer? #t)", "(boolean? #t)", "(boolean? 1)", "(string? \"asd\")" , "(string? 1)", "(string-append \"a\" \"s\" \"d\")", "(string-length \"asd\")"])
+main = forM (
+    ["(list? '(1))", "(list? '())", "(list? 1)"]
+    ++ ["(equal? 'if 'if)", "(equal? #t #t)", "(equal? 1 1)", "(equal? \"asd\" \"qwert\")"])
     (putStrLn . (either show show) . interp)
 
 interp :: String -> Either LispExcept LispVal
@@ -53,9 +55,9 @@ Tok.TokenParser {Tok.parens = parens, Tok.identifier = identifier, Tok.reserved 
 
 schemeDef :: Tok.GenLanguageDef String () Identity
 schemeDef = Lang.emptyDef 
-    { Tok.identStart = letter <|> oneOf "!$%&*/:<=>?^_~+-" --Not entirely correct in r5rs an identifier is Tok.identifier or + or - or ...
+    { Tok.identStart = letter <|> oneOf "!$%&*/:<=>?^_~+-"
     , Tok.identLetter = digit <|> Tok.identStart schemeDef
-    , Tok.reservedNames = ["#t", "#f", "'"]
+    , Tok.reservedNames = ["#t", "#f"]
     }
 
 evalExprList :: LispVal -> ReaderT Env (Either LispExcept) LispVal
@@ -120,12 +122,15 @@ stdEnv = M.fromList
     ("or", PProcedure $ boolFoldop (||)),
     ("boolean?", PProcedure $ lispvalQ unpackBool),
     ("string-append", PProcedure $ strFoldop (++)),
+    ("integer->string", PProcedure $ unop String unpackInteger show),
     ("string-length", PProcedure $ unop Integer unpackStr (toInteger . length)),
     ("string=?", PProcedure $ stringCompOp (==)),
     ("string?", PProcedure $ lispvalQ unpackStr),
     ("car", PProcedure car),
     ("cdr", PProcedure cdr),
-    ("cons", PProcedure cons)
+    ("cons", PProcedure cons),
+    ("list?", PProcedure $ lispvalQ unpackList),
+    ("equal?", PProcedure equal)
     ]
 
 intFoldop = foldop Integer unpackInteger
@@ -145,6 +150,10 @@ compop _ _ [] = throwError $ NumArgs 2 []
 compop _ _ s@[_] = throwError $ NumArgs 2 s
 compop unpacker op params = mapM unpacker params >>= \x -> return $ Bool $ and (zipWith (op) (x) (tail x))
 
+unop :: (b -> LispVal) -> (LispVal -> Either LispExcept a) -> (a -> b) -> [LispVal] -> Either LispExcept LispVal
+unop packer unpacker op [arg] = unpacker arg >>= return . packer . op
+unop _ _ _ badArgs = throwError $ NumArgs 1 badArgs
+
 unpackInteger :: LispVal -> Either LispExcept Integer
 unpackInteger (Integer n) = return n
 unpackInteger notInt = throwError $ TypeMismatch "integer" notInt
@@ -156,6 +165,10 @@ unpackBool notBool = throwError $ TypeMismatch "bool" notBool
 unpackStr :: LispVal -> Either LispExcept String
 unpackStr (String s) = return s
 unpackStr notStr = throwError $ TypeMismatch "string" notStr
+
+unpackList :: LispVal -> Either LispExcept [LispVal]
+unpackList (List l) = return l
+unpackList notlst = throwError $ TypeMismatch "list" notlst
 
 car :: [LispVal] -> Either LispExcept LispVal
 car [(List (x : xs))] = return x
@@ -176,9 +189,13 @@ lispvalQ :: (LispVal -> Either LispExcept a) -> [LispVal] -> Either LispExcept L
 lispvalQ unpacker [x] = either (\x->return $ Bool False) (\x->return $ Bool True) (unpacker x)
 lispvalQ _ args = throwError $ NumArgs 2 args
 
-unop :: (b -> LispVal) -> (LispVal -> Either LispExcept a) -> (a -> b) -> [LispVal] -> Either LispExcept LispVal
-unop packer unpacker op [arg] = unpacker arg >>= return . packer . op
-unop _ _ _ badArgs = throwError $ NumArgs 1 badArgs
+equal :: [LispVal] -> Either LispExcept LispVal
+equal [Atom a1, Atom a2] = return $ Bool $ a1 == a2
+equal [Bool b1, Bool b2] = return $ Bool $ b1 == b2
+equal [Integer i1, Integer i2] = return $ Bool $ i1 == i2
+equal [String s1, String s2] = return $ Bool $ s1 == s2
+equal [_, _] = return $ Bool False
+equal badArgs =  throwError $ NumArgs 2 badArgs
 
 type Env = M.Map String LispVal
 
