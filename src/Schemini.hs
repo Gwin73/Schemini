@@ -9,7 +9,7 @@ import qualified Data.Map as M
 import Control.Monad.Reader
  
 main = forM (
-    ["(cdr '(1 2))", "(print-line \"asd\")", "(print-line (read-line))"])
+    ["(cdr '(1 2))", "(print-line \"asd\")", "(print-line (read-line))", "(str->int \"123\")", "(str->int \"asd\")"])
     (\x -> (runExceptT $ interp x) >>= putStrLn . (either show show))
 
 interp :: String -> ExceptT LispExcept IO LispVal
@@ -26,7 +26,7 @@ expr
     =  atom      
     <|> bool
     <|> integer
-    <|> string'
+    <|> str
     <|> quoted
     <|> list
 
@@ -39,8 +39,8 @@ bool = (reserved "#t" >> (return $ Bool True)) <|> (reserved "#f" >> (return $ B
 integer :: Parser LispVal
 integer = lexeme $ many1 digit >>= return . Int . read
 
-string' :: Parser LispVal
-string' = lexeme $ between (char '\"') (char '\"') (many (try escapeChar <|> noneOf ['\"', '\\'])) >>= (return . String)
+str :: Parser LispVal
+str = lexeme $ between (char '\"') (char '\"') (many (try escapeChar <|> noneOf ['\"', '\\'])) >>= (return . String)
     where escapeChar = char '\\' >> oneOf ['\\', '"'] >>= return
 
 quoted :: Parser LispVal
@@ -54,7 +54,7 @@ Tok.TokenParser {Tok.parens = parens, Tok.identifier = identifier, Tok.reserved 
 
 schemeDef :: Tok.GenLanguageDef String () Identity
 schemeDef = Lang.emptyDef 
-    { Tok.identStart = letter <|> oneOf "!$%&*/:<=>?^_~+-"
+    { Tok.identStart = letter <|> oneOf "!$%&*/:<=>?^_~+-|"
     , Tok.identLetter = digit <|> Tok.identStart schemeDef
     , Tok.reservedNames = ["#t", "#f"]
     }
@@ -122,10 +122,11 @@ stdEnv = M.fromList
     ("||", StdFunction $ boolFoldop (||)),
     ("bool?", StdFunction $ lispvalQ unpackBool),
     ("++", StdFunction $ strFoldop (++)),
-    ("int->string", StdFunction $ unop String unpackInteger show),
-    ("string-length", StdFunction $ unop Int unpackStr (toInteger . length)),
-    ("string=?", StdFunction $ stringCompOp (==)),
-    ("string?", StdFunction $ lispvalQ unpackStr),
+    ("int->str", StdFunction $ unop String unpackInteger show),
+    ("str->int", StdFunction $ unop Int unpackStr read),
+    ("str-length", StdFunction $ unop Int unpackStr (toInteger . length)),
+    ("str=?", StdFunction $ stringCompOp (==)),
+    ("str?", StdFunction $ lispvalQ unpackStr),
     ("car", StdFunction car),
     ("cdr", StdFunction cdr),
     ("cons", StdFunction cons),
@@ -166,7 +167,7 @@ unpackBool notBool = throwError $ TypeMismatch "bool" notBool
 
 unpackStr :: LispVal -> Either LispExcept String
 unpackStr (String s) = return s
-unpackStr notStr = throwError $ TypeMismatch "string" notStr
+unpackStr notStr = throwError $ TypeMismatch "str" notStr
 
 unpackList :: LispVal -> Either LispExcept [LispVal]
 unpackList (List l) = return l
@@ -201,7 +202,7 @@ equal badArgs =  throwError $ NumArgs 2 badArgs
 
 printLine :: [LispVal] -> ExceptT LispExcept IO LispVal
 printLine [String s] = liftIO $ putStrLn s >> (return $ Bool True) 
-printLine [badArg] = throwError $ TypeMismatch "string" badArg
+printLine [badArg] = throwError $ TypeMismatch "str" badArg
 printLine badArgs = throwError $ NumArgs 1 badArgs
 
 readLine :: [LispVal] -> ExceptT LispExcept IO LispVal
