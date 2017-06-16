@@ -7,10 +7,14 @@ import Control.Monad (forM)
 import Control.Monad.Except
 import qualified Data.Map as M
 import Control.Monad.Reader
+import System.Environment
  
-main = forM (
-    ["(cdr '(1 2))", "(print-line \"asd\")", "(print-line (read-line))", "(str->int \"123\")", "(str->int \"asd\")"])
-    (\x -> (runExceptT $ interp x) >>= putStrLn . (either show show))
+main :: IO ()
+main = do
+    args <- getArgs
+    if length args == 1
+        then readFile (args !! 0) >>= runExceptT . interp >>= putStrLn . (either show show)
+        else putStrLn "Specify path to scm file"     
 
 interp :: String -> ExceptT LispExcept IO LispVal
 interp input = either 
@@ -54,20 +58,24 @@ Tok.TokenParser {Tok.parens = parens, Tok.identifier = identifier, Tok.reserved 
 
 schemeDef :: Tok.GenLanguageDef String () Identity
 schemeDef = Lang.emptyDef 
-    { Tok.identStart = letter <|> oneOf "!$%&*/:<=>?^_~+-|"
+    { Tok.commentLine = ";"
+    , Tok.identStart = letter <|> oneOf "!$%&*/:<=>?^_~+-|"
     , Tok.identLetter = digit <|> Tok.identStart schemeDef
     , Tok.reservedNames = ["#t", "#f"]
     }
 
 evalExprList :: LispVal -> ReaderT Env (ExceptT LispExcept IO) LispVal
-evalExprList (List ((List [Atom "define", Atom var, expr] : rest))) = do
+evalExprList (List ((List [Atom "def", Atom var, expr] : rest))) = do
     env <- ask
-    val <- eval expr
-    let envFunc = (const $ M.insert var val env) in
-        (case rest of
-            [] -> lift $ return $ List []
-            [x] -> local envFunc (evalExprList x)
-            x -> local envFunc (evalExprList $ List x))
+    if var `M.member` env
+        then lift $ throwError $ UnboundVar "Defining bound variable" var
+        else do 
+            val <- eval expr
+            let envFunc = (const $ M.insert var val env) in
+                (case rest of
+                    [] -> lift $ return $ List []
+                    [x] -> local envFunc (evalExprList x)
+                    x -> local envFunc (evalExprList $ List x))
 evalExprList x = eval x
 
 eval :: LispVal -> ReaderT Env (ExceptT LispExcept IO) LispVal
@@ -89,7 +97,11 @@ eval (List [Atom "if", pred, conseq, alt]) = do
 eval (List (Atom "fn" : List params : body)) = do
     env <- ask
     lift $ return $ Function (map show params) body env
-eval (List [Atom "def", Atom var, expr]) = eval expr
+eval (List [Atom "def", Atom var, expr]) = do
+    env <- ask
+    if var `M.member` env
+        then lift $ throwError $ UnboundVar "Defining bound variable" var
+        else eval expr
 eval (List (proc : args)) = do
     p <- eval proc
     as <- mapM eval args
@@ -197,6 +209,7 @@ equal [Atom a1, Atom a2] = return $ Bool $ a1 == a2
 equal [Bool b1, Bool b2] = return $ Bool $ b1 == b2
 equal [Int i1, Int i2] = return $ Bool $ i1 == i2
 equal [String s1, String s2] = return $ Bool $ s1 == s2
+equal [List l1, List l2] = return $ Bool $ (length l1 == length l2) && all (\(Right (Bool x)) -> x) (zipWith (\x y -> equal [x, y]) l1 l2)
 equal [_, _] = return $ Bool False
 equal badArgs =  throwError $ NumArgs 2 badArgs
 
