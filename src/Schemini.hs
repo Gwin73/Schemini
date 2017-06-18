@@ -8,13 +8,18 @@ import Control.Monad.Except
 import qualified Data.Map as M
 import Control.Monad.Reader
 import System.Environment
+import System.Directory
  
 main :: IO ()
 main = do
     args <- getArgs
     if length args == 1
-        then readFile (args !! 0) >>= runExceptT . interp >>= putStrLn . (either show show)
-        else putStrLn "Specify path to scm file"     
+        then do
+            exists <- doesFileExist $ args !! 0
+            if exists
+                then readFile (args !! 0) >>= runExceptT . interp >>= putStrLn . (either show show)
+                else putStrLn "File does not exist"
+        else putStrLn "Specify path to scm file."
 
 interp :: String -> ExceptT LispExcept IO LispVal
 interp input = either 
@@ -31,6 +36,7 @@ expr
     <|> bool
     <|> integer
     <|> str
+    <|> lambda
     <|> quoted
     <|> list
 
@@ -50,6 +56,9 @@ str = lexeme $ between (char '\"') (char '\"') (many (try escapeChar <|> noneOf 
 quoted :: Parser LispVal
 quoted = lexeme $ string "'" >> expr >>= \x -> return $ List [Atom "quote", x]
 
+lambda :: Parser LispVal
+lambda = lexeme $ string "\\" >> (return . Atom) "lambda"
+
 list :: Parser LispVal
 list = parens $ many expr >>= return . List
 
@@ -65,17 +74,22 @@ schemeDef = Lang.emptyDef
     }
 
 evalExprList :: LispVal -> ReaderT Env (ExceptT LispExcept IO) LispVal
-evalExprList (List ((List [Atom "def", Atom var, expr] : rest))) = do
+evalExprList (List (List [Atom "def", Atom var, expr] : rest)) = do
     env <- ask
     if var `M.member` env
         then lift $ throwError $ UnboundVar "Defining bound variable" var
         else do 
-            val <- eval expr
+            val <- local (const $ M.insert var (List []) env) (eval expr) -- Define the lambda as [] in its own local enviroment, replaced in eval and needed for recursion
             let envFunc = (const $ M.insert var val env) in
                 (case rest of
-                    [] -> lift $ return $ List []
+                    [] -> lift $ return $ val
                     [x] -> local envFunc (evalExprList x)
                     x -> local envFunc (evalExprList $ List x))
+evalExprList (List (List [Atom "load", Atom fileName] : rest)) = do
+    f <- liftIO $ readFile $ fileName ++ ".scm" --TODO: Handle case where file doesnt exist
+    (List lib) <- either (throwError . ParseExcept) return (parseExpr f)
+    evalExprList $ List (lib ++ rest)
+
 evalExprList x = eval x
 
 eval :: LispVal -> ReaderT Env (ExceptT LispExcept IO) LispVal
@@ -94,7 +108,7 @@ eval (List [Atom "if", pred, conseq, alt]) = do
         Bool True -> eval conseq
         Bool False -> eval alt 
         x -> lift $ throwError $ TypeMismatch "bool" x
-eval (List (Atom "fn" : List params : body)) = do
+eval (List [Atom "lambda", List params, body]) = do
     env <- ask
     lift $ return $ Function (map show params) body env
 eval (List [Atom "def", Atom var, expr]) = do
@@ -106,17 +120,17 @@ eval (List (proc : args)) = do
     p <- eval proc
     as <- mapM eval args
     applyProc p as
-eval badform = lift $ throwError $ BadSpecialForm badform  
+eval badform = lift $ throwError $ BadSpecialForm badform
 
 applyProc :: LispVal -> [LispVal] -> ReaderT Env (ExceptT LispExcept IO) LispVal
 applyProc (StdFunction f) args = either (throwError) (return) (f args) 
 applyProc (StdIOFunction f) args = lift $ f args
-applyProc (Function params body env) args = do
+applyProc (Function params body localEnv) args = do
+    env <- ask
     if length params /= length args
         then lift $ throwError $ NumArgs (length params) args
-        else local (const $ M.fromList (zip params args) `M.union` env) (liftM last $ mapM eval body)
+        else local (const $ M.fromList (zip params args) `M.union` ((env `M.intersection` localEnv)) `M.union` localEnv) (eval body)
 applyProc notP _ = lift $ throwError $ TypeMismatch "function" notP
-
 
 stdEnv = M.fromList 
     [("+", StdFunction $ intFoldop (+)), 
@@ -133,7 +147,7 @@ stdEnv = M.fromList
     ("&&", StdFunction $ boolFoldop (&&)),
     ("||", StdFunction $ boolFoldop (||)),
     ("bool?", StdFunction $ lispvalQ unpackBool),
-    ("++", StdFunction $ strFoldop (++)),
+    ("str-append", StdFunction $ strFoldop (++)),
     ("int->str", StdFunction $ unop String unpackInteger show),
     ("str->int", StdFunction $ unop Int unpackStr read),
     ("str-length", StdFunction $ unop Int unpackStr (toInteger . length)),
@@ -232,7 +246,8 @@ data LispVal
     | List [LispVal]
     | StdFunction ([LispVal] -> Either LispExcept LispVal)
     | StdIOFunction ([LispVal] -> ExceptT LispExcept IO LispVal)
-    | Function [String] [LispVal] Env
+    | Function [String] LispVal Env
+    | Lambda
 
 instance Show LispVal where
     show v = case v of
@@ -243,6 +258,7 @@ instance Show LispVal where
         String s -> "\"" ++ s ++ "\""
         List l -> "(" ++ (unwords . map show) l ++ ")"
         StdFunction _ -> "#<Standard function>"  
+        StdIOFunction _ -> "#<Standard function>" 
         Function _ _ _ -> "#<Function>"
 
 data LispExcept
