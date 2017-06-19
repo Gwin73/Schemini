@@ -24,7 +24,7 @@ main = do
 interp :: String -> ExceptT LispExcept IO LispVal
 interp input = either 
         (throwError . ParseExcept) 
-        (\x -> (runReaderT (evalExprList x) stdEnv))
+        (\x -> (runReaderT (eval x) stdEnv))
         (parseExpr input)
 
 parseExpr :: String -> Either ParseError LispVal
@@ -73,24 +73,6 @@ schemeDef = Lang.emptyDef
     , Tok.reservedNames = ["#t", "#f"]
     }
 
-evalExprList :: LispVal -> ReaderT Env (ExceptT LispExcept IO) LispVal
-evalExprList (List (List [Atom "def", Atom var, expr] : rest)) = do
-    env <- ask
-    if var `M.member` env
-        then lift $ throwError $ UnboundVar "Defining bound variable" var
-        else do 
-            val <- local (const $ M.insert var (List []) env) (eval expr) -- Define the lambda as [] in its own local enviroment, replaced in eval and needed for recursion
-            let envFunc = (const $ M.insert var val env) in
-                (case rest of
-                    [] -> lift $ return $ val
-                    [x] -> local envFunc (evalExprList x)
-                    x -> local envFunc (evalExprList $ List x))
-evalExprList (List (List [Atom "load", Atom fileName] : rest)) = do
-    f <- liftIO $ readFile $ fileName ++ ".scm" --TODO: Handle case where file doesnt exist
-    (List lib) <- either (throwError . ParseExcept) return (parseExpr f)
-    evalExprList $ List (lib ++ rest)
-
-evalExprList x = eval x
 
 eval :: LispVal -> ReaderT Env (ExceptT LispExcept IO) LispVal
 eval (Atom var) = do
@@ -116,11 +98,36 @@ eval (List [Atom "def", Atom var, expr]) = do
     if var `M.member` env
         then lift $ throwError $ UnboundVar "Defining bound variable" var
         else eval expr
-eval (List (proc : args)) = do
-    p <- eval proc
+eval (List [Atom "load", Atom fileName]) = lift $ return $ List []
+eval (List (Atom "begin" : expressions)) = evalExprList expressions
+eval (List (func : args)) = do
+    p <- eval func
     as <- mapM eval args
     applyProc p as
 eval badform = lift $ throwError $ BadSpecialForm badform
+
+evalExprList :: [LispVal] -> ReaderT Env (ExceptT LispExcept IO) LispVal
+evalExprList (List [Atom "def", Atom var, expr] : rest) = do
+    env <- ask
+    if var `M.member` env
+        then lift $ throwError $ UnboundVar "Defining bound variable" var
+        else do 
+            val <- local (const $ M.insert var (List []) env) (eval expr) -- Define the lambda as [] in its own local enviroment, replaced in eval and needed for recursion
+            let envFunc = (const $ M.insert var val env) in
+                (case rest of
+                    [] -> lift $ return $ val
+                    [x] -> local envFunc (evalExprList [x])
+                    x -> local envFunc (evalExprList x))
+evalExprList (List [Atom "load", Atom fileName] : rest) = do
+    f <- liftIO $ readFile $ fileName ++ ".scm" --TODO: Handle case where file doesnt exist
+    lib <- either (throwError . ParseExcept) return (parseExpr f)
+    case rest of 
+        [] -> lift $ return $ List []
+        _  -> case lib of
+                (List a@(Atom "begin" : expressions)) -> evalExprList (expressions ++ rest)
+                expr@(List _) -> evalExprList (expr : rest)
+evalExprList [x] = eval x
+evalExprList badform = lift $ throwError $ BadSpecialForm $ List (Atom "begin ..." : badform)
 
 applyProc :: LispVal -> [LispVal] -> ReaderT Env (ExceptT LispExcept IO) LispVal
 applyProc (StdFunction f) args = either (throwError) (return) (f args) 
