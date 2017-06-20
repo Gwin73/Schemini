@@ -93,6 +93,9 @@ eval (List [Atom "if", pred, conseq, alt]) = do
 eval (List [Atom "lambda", List params, body]) = do
     env <- ask
     lift $ return $ Function (map show params) body env
+eval (List [Atom "lambda", Atom params, body]) = do
+    env <- ask
+    lift $ return $ VariadicFunction params body env
 eval (List [Atom "def", Atom var, expr]) = do
     env <- ask
     if var `M.member` env
@@ -100,6 +103,7 @@ eval (List [Atom "def", Atom var, expr]) = do
         else eval expr
 eval (List [Atom "load", Atom fileName]) = lift $ return $ List []
 eval (List (Atom "begin" : expressions)) = evalExprList expressions
+eval (List [Atom "apply", func, List args]) = eval (List (func : args))
 eval (List (func : args)) = do
     p <- eval func
     as <- mapM eval args
@@ -137,58 +141,58 @@ applyProc (Function params body localEnv) args = do
     if length params /= length args
         then lift $ throwError $ NumArgs (length params) args
         else local (const $ M.fromList (zip params args) `M.union` ((env `M.intersection` localEnv)) `M.union` localEnv) (eval body)
+
+applyProc (VariadicFunction params body localEnv) args = do
+    env <- ask
+    local (const $ (M.fromList [(params, List args)]) `M.union` ((env `M.intersection` localEnv)) `M.union` localEnv) (eval body)
+
+
 applyProc notP _ = lift $ throwError $ TypeMismatch "function" notP
 
 stdEnv = M.fromList 
-    [("+", StdFunction $ intFoldop (+)), 
-    ("-", StdFunction $ intFoldop (-)), 
-    ("*", StdFunction $ intFoldop (*)), 
-    ("/", StdFunction $ intFoldop div),
-    ("mod", StdFunction $ intFoldop mod),
-    ("=", StdFunction $ intCompop (==)),
-    (">", StdFunction $ intCompop (>)),
-    (">=", StdFunction $ intCompop (>=)),
-    ("<", StdFunction $ intCompop (<)),
-    ("<=", StdFunction $ intCompop (<=)),
-    ("int?", StdFunction $ lispvalQ unpackInteger),
-    ("&&", StdFunction $ boolFoldop (&&)),
-    ("||", StdFunction $ boolFoldop (||)),
-    ("bool?", StdFunction $ lispvalQ unpackBool),
-    ("str-append", StdFunction $ strFoldop (++)),
+    [("+", StdFunction $ intIntBinop (+)), 
+    ("-", StdFunction $ intIntBinop (-)), 
+    ("*", StdFunction $ intIntBinop (*)), 
+    ("/", StdFunction $ intIntBinop div),
+    ("mod", StdFunction $ intIntBinop mod),
+    ("=", StdFunction $ intBoolBinop (==)),
+    (">", StdFunction $ intBoolBinop (>)),
+    (">=", StdFunction $ intBoolBinop (>=)),
+    ("<", StdFunction $ intBoolBinop (<)),
+    ("<=", StdFunction $ intBoolBinop (<=)),
+    ("int?", StdFunction $ lispvalQ unpackInteger), --
+    ("&&", StdFunction $ boolBoolBinop (&&)),
+    ("||", StdFunction $ boolBoolBinop (||)),
+    ("bool?", StdFunction $ lispvalQ unpackBool), --
+    ("str-append", StdFunction $ binop String unpackStr (++)),
     ("int->str", StdFunction $ unop String unpackInteger show),
     ("str->int", StdFunction $ unop Int unpackStr read),
     ("str-length", StdFunction $ unop Int unpackStr (toInteger . length)),
-    ("str=?", StdFunction $ stringCompOp (==)),
-    ("str?", StdFunction $ lispvalQ unpackStr),
-    ("car", StdFunction car),
-    ("cdr", StdFunction cdr),
-    ("cons", StdFunction cons),
-    ("list?", StdFunction $ lispvalQ unpackList),
+    ("str=?", StdFunction $ binop Bool unpackStr (==)),
+    ("str?", StdFunction $ lispvalQ unpackStr), --
+    ("car", StdFunction car), --
+    ("cdr", StdFunction cdr), --
+    ("cons", StdFunction cons), --
+    ("list?", StdFunction $ lispvalQ unpackList), --
     ("equal?", StdFunction equal),
     ("print-line", StdIOFunction printLine),
     ("read-line", StdIOFunction readLine)
     ]
 
-intFoldop = foldop Int unpackInteger
-boolFoldop = foldop Bool unpackBool
-strFoldop = foldop String unpackStr
-
-foldop :: (a -> LispVal) -> (LispVal -> Either LispExcept a) -> (a -> a -> a) -> [LispVal] -> Either LispExcept LispVal
-foldop _ _ _ [] = throwError $ NumArgs 2 []
-foldop _ _ _ s@[_] = throwError $ NumArgs 2 s
-foldop packer unpacker op params = mapM unpacker params >>= return . packer . foldl1 op
-
-intCompop = compop unpackInteger
-stringCompOp = compop unpackBool 
-
-compop :: (LispVal -> Either LispExcept a) -> (a -> a -> Bool) -> [LispVal] -> Either LispExcept LispVal
-compop _ _ [] = throwError $ NumArgs 2 []
-compop _ _ s@[_] = throwError $ NumArgs 2 s
-compop unpacker op params = mapM unpacker params >>= \x -> return $ Bool $ and (zipWith (op) (x) (tail x))
-
 unop :: (b -> LispVal) -> (LispVal -> Either LispExcept a) -> (a -> b) -> [LispVal] -> Either LispExcept LispVal
 unop packer unpacker op [arg] = unpacker arg >>= return . packer . op
 unop _ _ _ badArgs = throwError $ NumArgs 1 badArgs
+
+intIntBinop = binop Int unpackInteger
+boolBoolBinop = binop Bool unpackBool
+intBoolBinop = binop Bool unpackInteger
+
+binop :: (b -> LispVal) -> (LispVal -> Either LispExcept a) -> (a -> a -> b) -> [LispVal] -> Either LispExcept LispVal
+binop packer unpacker op args@[arg1, arg2] = do
+    uArg1 <- unpacker arg1
+    uArg2 <- unpacker arg2
+    return $ packer $ (uArg1 `op` uArg2)
+binop _ _ _ badArgs = throwError $ NumArgs 2 badArgs
 
 unpackInteger :: LispVal -> Either LispExcept Integer
 unpackInteger (Int n) = return n
@@ -232,7 +236,7 @@ equal [Int i1, Int i2] = return $ Bool $ i1 == i2
 equal [String s1, String s2] = return $ Bool $ s1 == s2
 equal [List l1, List l2] = return $ Bool $ (length l1 == length l2) && all (\(Right (Bool x)) -> x) (zipWith (\x y -> equal [x, y]) l1 l2)
 equal [_, _] = return $ Bool False
-equal badArgs =  throwError $ NumArgs 2 badArgs
+equal badArgs = throwError $ NumArgs 2 badArgs
 
 printLine :: [LispVal] -> ExceptT LispExcept IO LispVal
 printLine [String s] = liftIO $ putStrLn s >> (return $ Bool True) 
@@ -254,6 +258,7 @@ data LispVal
     | StdFunction ([LispVal] -> Either LispExcept LispVal)
     | StdIOFunction ([LispVal] -> ExceptT LispExcept IO LispVal)
     | Function [String] LispVal Env
+    | VariadicFunction String LispVal Env
     | Lambda
 
 instance Show LispVal where
@@ -267,6 +272,7 @@ instance Show LispVal where
         StdFunction _ -> "#<Standard function>"  
         StdIOFunction _ -> "#<Standard function>" 
         Function _ _ _ -> "#<Function>"
+        VariadicFunction _ _ _ -> "#<Function>"
 
 data LispExcept
     = TypeMismatch String LispVal
