@@ -9,6 +9,7 @@ import qualified Data.Map as M
 import Control.Monad.Reader
 import System.Environment
 import System.Directory
+import qualified Control.Exception as Exc
  
 main :: IO ()
 main = do
@@ -17,7 +18,9 @@ main = do
         then do
             exists <- doesFileExist $ args !! 0
             if exists
-                then readFile (args !! 0) >>= runExceptT . interp >>= putStrLn . (either show show)
+                then do
+                    s <- readFile (args !! 0)
+                    (((runExceptT . interp) s) >>= (putStrLn . (either show show))) `Exc.catch` (\(Exc.SomeException e) -> putStrLn $ "RuntimeError: " ++ (show e))
                 else putStrLn "File does not exist"
         else putStrLn "Specify path to scm file."
 
@@ -73,7 +76,6 @@ schemeDef = Lang.emptyDef
     , Tok.reservedNames = ["#t", "#f"]
     }
 
-
 eval :: LispVal -> ReaderT Env (ExceptT LispExcept IO) LispVal
 eval (Atom var) = do
     env <- ask
@@ -101,7 +103,7 @@ eval (List [Atom "def", Atom var, expr]) = do
     if var `M.member` env
         then lift $ throwError $ UnboundVar "Defining bound variable" var
         else eval expr
-eval (List [Atom "load", Atom fileName]) = lift $ return $ List []
+eval (List [Atom "load", Atom fileName]) = lift $ return $ List [] --No error, even when file doesnt exist
 eval (List (Atom "begin" : expressions)) = evalExprList expressions
 eval (List [Atom "apply", func, List args]) = eval (List (func : args))
 eval (List (func : args)) = do
@@ -123,7 +125,7 @@ evalExprList (List [Atom "def", Atom var, expr] : rest) = do
                     [x] -> local envFunc (evalExprList [x])
                     x -> local envFunc (evalExprList x))
 evalExprList (List [Atom "load", Atom fileName] : rest) = do
-    f <- liftIO $ readFile $ fileName ++ ".scm" --TODO: Handle case where file doesnt exist
+    f <- liftIO $ readFile $ fileName ++ ".scm" 
     lib <- either (throwError . ParseExcept) return (parseExpr f)
     case rest of 
         [] -> lift $ return $ List []
@@ -141,12 +143,9 @@ applyProc (Function params body localEnv) args = do
     if length params /= length args
         then lift $ throwError $ NumArgs (length params) args
         else local (const $ M.fromList (zip params args) `M.union` ((env `M.intersection` localEnv)) `M.union` localEnv) (eval body)
-
 applyProc (VariadicFunction params body localEnv) args = do
     env <- ask
     local (const $ (M.fromList [(params, List args)]) `M.union` ((env `M.intersection` localEnv)) `M.union` localEnv) (eval body)
-
-
 applyProc notP _ = lift $ throwError $ TypeMismatch "function" notP
 
 stdEnv = M.fromList 
@@ -160,20 +159,20 @@ stdEnv = M.fromList
     (">=", StdFunction $ intBoolBinop (>=)),
     ("<", StdFunction $ intBoolBinop (<)),
     ("<=", StdFunction $ intBoolBinop (<=)),
-    ("int?", StdFunction $ lispvalQ unpackInteger), --
+    ("int?", StdFunction $ lispvalQ unpackInteger), 
     ("&&", StdFunction $ boolBoolBinop (&&)),
     ("||", StdFunction $ boolBoolBinop (||)),
-    ("bool?", StdFunction $ lispvalQ unpackBool), --
-    ("str-append", StdFunction $ binop String unpackStr (++)),
+    ("bool?", StdFunction $ lispvalQ unpackBool), 
+    ("str-append", StdFunction $ binop String unpackStr unpackStr (++)),
     ("int->str", StdFunction $ unop String unpackInteger show),
     ("str->int", StdFunction $ unop Int unpackStr read),
     ("str-length", StdFunction $ unop Int unpackStr (toInteger . length)),
-    ("str=?", StdFunction $ binop Bool unpackStr (==)),
-    ("str?", StdFunction $ lispvalQ unpackStr), --
-    ("car", StdFunction car), --
-    ("cdr", StdFunction cdr), --
-    ("cons", StdFunction cons), --
-    ("list?", StdFunction $ lispvalQ unpackList), --
+    ("str=?", StdFunction $ binop Bool unpackStr unpackStr (==)),
+    ("str?", StdFunction $ lispvalQ unpackStr), 
+    ("car", StdFunction $ unop id unpackList (head)),
+    ("cdr", StdFunction $ unop List unpackList (tail)),
+    ("cons", StdFunction $ binop List (Right) unpackList (:)),
+    ("list?", StdFunction $ lispvalQ unpackList), 
     ("equal?", StdFunction equal),
     ("print-line", StdIOFunction printLine),
     ("read-line", StdIOFunction readLine)
@@ -183,16 +182,16 @@ unop :: (b -> LispVal) -> (LispVal -> Either LispExcept a) -> (a -> b) -> [LispV
 unop packer unpacker op [arg] = unpacker arg >>= return . packer . op
 unop _ _ _ badArgs = throwError $ NumArgs 1 badArgs
 
-intIntBinop = binop Int unpackInteger
-boolBoolBinop = binop Bool unpackBool
-intBoolBinop = binop Bool unpackInteger
+intIntBinop = binop Int unpackInteger unpackInteger
+boolBoolBinop = binop Bool unpackBool unpackBool
+intBoolBinop = binop Bool unpackInteger unpackInteger
 
-binop :: (b -> LispVal) -> (LispVal -> Either LispExcept a) -> (a -> a -> b) -> [LispVal] -> Either LispExcept LispVal
-binop packer unpacker op args@[arg1, arg2] = do
-    uArg1 <- unpacker arg1
-    uArg2 <- unpacker arg2
+binop :: (b -> LispVal) -> (LispVal -> Either LispExcept a) -> (LispVal -> Either LispExcept c) -> (a -> c -> b) -> [LispVal] -> Either LispExcept LispVal
+binop packer unpacker1 unpacker2 op args@[arg1, arg2] = do
+    uArg1 <- unpacker1 arg1
+    uArg2 <- unpacker2 arg2
     return $ packer $ (uArg1 `op` uArg2)
-binop _ _ _ badArgs = throwError $ NumArgs 2 badArgs
+binop _ _ _ _ badArgs = throwError $ NumArgs 2 badArgs
 
 unpackInteger :: LispVal -> Either LispExcept Integer
 unpackInteger (Int n) = return n
@@ -210,21 +209,6 @@ unpackList :: LispVal -> Either LispExcept [LispVal]
 unpackList (List l) = return l
 unpackList notlst = throwError $ TypeMismatch "list" notlst
 
-car :: [LispVal] -> Either LispExcept LispVal
-car [(List (x : xs))] = return x
-car [badArg] = throwError $ TypeMismatch "list" badArg
-car badArgs = throwError $ NumArgs 1 badArgs
-
-cdr :: [LispVal] -> Either LispExcept LispVal
-cdr [(List (x : xs))] = return $ List xs
-cdr [badArg] = throwError $ TypeMismatch "list" badArg
-cdr badArgs = throwError $ NumArgs 1 badArgs
-
-cons :: [LispVal] -> Either LispExcept LispVal
-cons [x, List xs] = return $ List $ x : xs
-cons [_, arg2] = throwError $ TypeMismatch "list" arg2
-cons badArgs = throwError $ NumArgs 2 badArgs
-
 lispvalQ :: (LispVal -> Either LispExcept a) -> [LispVal] -> Either LispExcept LispVal
 lispvalQ unpacker [x] = either (\x->return $ Bool False) (\x->return $ Bool True) (unpacker x)
 lispvalQ _ args = throwError $ NumArgs 2 args
@@ -239,7 +223,7 @@ equal [_, _] = return $ Bool False
 equal badArgs = throwError $ NumArgs 2 badArgs
 
 printLine :: [LispVal] -> ExceptT LispExcept IO LispVal
-printLine [String s] = liftIO $ putStrLn s >> (return $ Bool True) 
+printLine [String s] = liftIO $ putStrLn s >> (return $ List []) 
 printLine [badArg] = throwError $ TypeMismatch "str" badArg
 printLine badArgs = throwError $ NumArgs 1 badArgs
 
@@ -280,6 +264,7 @@ data LispExcept
     | UnboundVar String String
     | BadSpecialForm LispVal
     | ParseExcept ParseError
+    | RuntimeExcept String
 
 instance Show LispExcept where 
     show e = case e of
@@ -288,3 +273,4 @@ instance Show LispExcept where
         UnboundVar message varname -> "EvalError: " ++ message ++ ": " ++ varname
         BadSpecialForm form -> "EvalError: Unrecognized special form: " ++ show form
         ParseExcept err -> "ParseError: " ++ show err
+        RuntimeExcept s -> s
