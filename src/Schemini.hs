@@ -78,7 +78,7 @@ schemeDef = Lang.emptyDef
 eval :: LispVal -> ReaderT Env (ExceptT LispExcept IO) LispVal
 eval (Atom var) = ask >>= \env -> maybe 
     (lift $ throwError $ UnboundVar "Getting unbound variable" var) 
-    (lift . return) 
+    (\x-> if not $ isAlloc x then lift $ return x else lift $ throwError $ UnboundVar "Getting unbound variable" var) 
     (M.lookup var env)
 eval val@(Bool _) = lift $ return val
 eval val@(Int _) = lift $ return val
@@ -147,10 +147,9 @@ applyProc notP _ = lift $ throwError $ TypeMismatch "function" notP
 
 update :: Env -> Env -> Env
 update localEnv env = (env `M.intersection` (M.filter isAlloc localEnv)) `M.union` localEnv
-    where 
-        isAlloc x = case x of 
-            Alloc -> True
-            _ -> False
+    
+isAlloc Alloc = True
+isAlloc _ = False
 
 primEnv = M.fromList 
     [("+", Function $ intIntBinop (+)), 
