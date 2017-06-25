@@ -1,1 +1,2 @@
 # Schemini
+Toy interpreter of a minimal scheme(ish) language, in around 200 lines of Haskell (without optional type declarations and newlines). Bugfree? Revolutionary? Useful in any way? 3*no, but a fun first Haskell project with lots of monads.

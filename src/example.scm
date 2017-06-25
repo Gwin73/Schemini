@@ -1,4 +1,14 @@
 (begin
 	(load stdlib)
-	(filter even? '(1 2 3 4 5))
+
+	(def sort (\ (lst)
+		(if (null? lst)
+			lst
+			(lst-append 
+				(lst-append 
+					(sort (filter (curry >= (car lst)) (cdr lst))) 
+					(cons (car lst) '())) 
+				(sort (filter (curry < (car lst)) (cdr lst)))))))
+
+	(sort '(3 1 1 2))
 )
