@@ -1,14 +1,13 @@
 (begin
 	(load stdlib)
 
-	(def sort (lambda (lst)
+	(defun (sort lst)
 		(if (null? lst)
 			lst
-			(lst-append 
-				(lst-append 
-					(sort (filter (curry >= (car lst)) (cdr lst))) 
-					(cons (car lst) '())) 
-				(sort (filter (curry < (car lst)) (cdr lst)))))))
+			(let 
+				(lesser (filter (curry >= (car lst)) (cdr lst)))
+				(greater (filter (curry < (car lst)) (cdr lst)))
+				(lst-append* (sort lesser) (list (car lst)) (sort greater)))))
 
 	(sort '(3 1 1 2))
 )

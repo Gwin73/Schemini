@@ -57,9 +57,6 @@ str = lexeme $ between (char '\"') (char '\"') (many (try escapeChar <|> noneOf 
 quoted :: Parser LispVal
 quoted = lexeme $ string "'" >> expr >>= \x -> return $ List [Atom "quote", x]
 
-lambda :: Parser LispVal
-lambda = lexeme $ string "\\" >> (return . Atom) "lambda"
-
 list :: Parser LispVal
 list = parens $ many expr >>= return . List
 
@@ -89,11 +86,10 @@ eval (List [Atom "if", pred, conseq, alt]) = do
         Bool True -> eval conseq
         Bool False -> eval alt 
         x -> lift $ throwError $ TypeMismatch "bool" x
-eval (List [Atom "lambda", List params, body]) = ask >>= \env -> lift $ return $ Lambda (map show params) body env
-eval (List [Atom "lambda", Atom params, body]) = ask >>= \env -> lift $ return $ VariadricLambda params body env
-
-eval (List [Atom "macro", List params, body]) = lift $ return $ Macro (map show params) body
-
+eval (List [Atom "lambda", List params, body]) = ask >>= \env -> lift $ return $ Lambda (map show params) [] body env
+eval (List [Atom "lambda", Atom params, body]) = ask >>= \env -> lift $ return $ Lambda [] params body env
+eval (List [Atom "macro", List params, body]) = lift $ return $ Macro (map show params) [] body
+eval (List [Atom "macro", Atom params, body]) = lift $ return $ Macro [] params body
 eval (List [Atom "def", Atom var, expr]) = do
     env <- ask
     if var `M.member` env
@@ -101,15 +97,17 @@ eval (List [Atom "def", Atom var, expr]) = do
         else eval expr
 eval (List [Atom "load", Atom fileName]) = lift $ return $ List []
 eval (List (Atom "begin" : expressions)) = evalExprList expressions
+
 eval (List [Atom "apply", func, arg]) = do
     evaledArg <- eval arg
     case evaledArg of 
         List args -> eval $ List $ func : args
         x -> lift $ throwError $ TypeMismatch "list" x
+
 eval (List (func : args)) = do
     p <- eval func
     case p of
-        (Macro _ _) -> applyMacro p args
+        (Macro _ _ _) -> applyMacro p args
         _ -> mapM eval args >>= \ as -> applyFunction p as
 eval badform = lift $ throwError $ BadSpecialForm badform
 
@@ -135,23 +133,30 @@ evalExprList (List [Atom "load", Atom fileName] : rest) = do
 evalExprList all@(List (Atom name : rest1) : rest2 : rest3) = do
     env <- ask
     case M.lookup name env of 
-        (Just macro@(Macro _ _)) -> (expandMacro macro rest1) >>= \ x-> evalExprList $ x : rest2 : rest3
+        (Just macro@(Macro _ _ _)) -> (expandMacro macro rest1) >>= \ x-> evalExprList $ x : rest2 : rest3
         _ -> lift $ throwError $ BadSpecialForm $ List $ Atom "begin ..." : all
 evalExprList [x] = eval x
 evalExprList badform = lift $ throwError $ BadSpecialForm $ List (Atom "begin ..." : badform)
 
-applyFunction :: LispVal -> [LispVal] -> ReaderT Env (ExceptT LispExcept IO) LispVal
+applyFunction, applyMacro, expandMacro :: LispVal -> [LispVal] -> ReaderT Env (ExceptT LispExcept IO) LispVal
 applyFunction (Function f) args = either (throwError) (return) (f args) 
 applyFunction (IOFunction f) args = lift $ f args
-applyFunction (Lambda params body localEnv) args = do
+applyFunction (Lambda params varParams body localEnv) args = do
     env <- ask
-    if length params /= length args
+    if length params /= length args && params /= []
         then lift $ throwError $ NumArgs (length params) args
-        else local (const $ M.fromList (zip params args) `M.union` (update localEnv env)) (eval body) --Add varargs here
-applyFunction (VariadricLambda params body localEnv) args = do
-    env <- ask
-    local (const $ (M.fromList [(params, List args)]) `M.union` (update localEnv env)) (eval body)
+        else local (const $ ((M.fromList [(varParams, List args)]) `M.union` (M.fromList (zip params args))) `M.union` (update localEnv env)) (eval body)
 applyFunction notP _ = lift $ throwError $ TypeMismatch "function" notP
+
+applyMacro macro@(Macro params varParams body) args = do
+    (expandMacro macro args) >>= eval 
+applyMacro notM _ = lift $ throwError $ TypeMismatch "macro" notM
+
+expandMacro (Macro params varParams body) args = do
+    env <- ask
+    if length params /= length args && params /= []
+        then lift $ throwError $ NumArgs (length params) args
+        else local (const $ ((M.fromList [(varParams, List args)]) `M.union` (M.fromList (zip params args))) `M.union` env) (eval body)
 
 update :: Env -> Env -> Env
 update localEnv env = (env `M.intersection` (M.filter isAlloc localEnv)) `M.union` localEnv
@@ -159,16 +164,6 @@ update localEnv env = (env `M.intersection` (M.filter isAlloc localEnv)) `M.unio
 isAlloc Alloc = True
 isAlloc _ = False
 
-applyMacro macro@(Macro params body) args = do
-    (expandMacro macro args) >>= eval 
-applyMacro notM _ = lift $ throwError $ TypeMismatch "macro" notM
-
-expandMacro (Macro params body) args = do
-    env <- ask
-    if length params /= length args
-        then lift $ throwError $ NumArgs (length params) args
-        else local (const $ M.fromList (zip params args) `M.union` env) (eval body)
---
 primEnv = M.fromList 
     [("+", Function $ intIntBinop (+)), 
     ("-", Function $ intIntBinop (-)), 
@@ -181,8 +176,6 @@ primEnv = M.fromList
     ("<", Function $ intBoolBinop (<)),
     ("<=", Function $ intBoolBinop (<=)),
     ("int?", Function $ lispvalQ unpackInt), 
-    ("&&", Function $ boolBoolBinop (&&)),
-    ("||", Function $ boolBoolBinop (||)),
     ("bool?", Function $ lispvalQ unpackBool),
     ("str-append", Function $ binop unpackStr unpackStr String (++)),
     ("int->str", Function $ unop unpackInt String show),
@@ -204,7 +197,6 @@ unop unpacker packer op [arg] = unpacker arg >>= return . packer . op
 unop _ _ _ badArgs = throwError $ NumArgs 1 badArgs
 
 intIntBinop = binop unpackInt unpackInt Int
-boolBoolBinop = binop unpackBool unpackBool Bool
 intBoolBinop = binop unpackInt unpackInt Bool
 
 binop :: Unpacker a -> Unpacker b -> Packer c -> (a -> b -> c) -> [LispVal] -> Either LispExcept LispVal
@@ -263,9 +255,8 @@ data LispVal
     | List [LispVal]
     | Function ([LispVal] -> Either LispExcept LispVal)
     | IOFunction ([LispVal] -> ExceptT LispExcept IO LispVal)
-    | Lambda [String] LispVal Env
-    | VariadricLambda String LispVal Env
-    | Macro [String] LispVal
+    | Lambda [String] String LispVal Env
+    | Macro [String] String LispVal
     | Alloc
 
 instance Show LispVal where
@@ -278,9 +269,8 @@ instance Show LispVal where
         List l -> "(" ++ (unwords . map show) l ++ ")"
         Function _ -> "#<Function>"  
         IOFunction _ -> "#<Function>" 
-        Lambda _ _ _ -> "#<Lambda>"
-        VariadricLambda _ _ _ -> "#<Lambda>"
-        Macro p b -> show p ++ show b
+        Lambda _ _ _ _ -> "#<Lambda>"
+        Macro p b v -> show p ++ show b
 
 data LispExcept
     = TypeMismatch String LispVal
