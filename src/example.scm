@@ -1,7 +1,7 @@
 (begin
 	(load stdlib)
 
-	(def sort (\ (lst)
+	(def sort (lambda (lst)
 		(if (null? lst)
 			lst
 			(lst-append 
