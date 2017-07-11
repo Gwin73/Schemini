@@ -1,4 +1,3 @@
-{-# LANGUAGE FlexibleContexts #-}
 import qualified Text.Parsec.Token as Tok
 import qualified Text.Parsec.Language as Lang
 import Text.ParserCombinators.Parsec hiding (spaces)
