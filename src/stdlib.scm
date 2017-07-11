@@ -1,4 +1,5 @@
 (begin
+	;Mixed
 	(def list (lambda lst lst)) ; Defun and L macros not defined
 
 	(def defmacro (macro (lst body) (list 'def (car lst) (list 'macro (cdr lst) body))))
@@ -9,6 +10,7 @@
 	
 	(defun (not x) (if x #f #t))
 
+	;Function funtions
 	(defun (id obj) obj) 
 
 	(defun (flip func) (L (arg1 arg2) (func arg2 arg1))) 
@@ -52,11 +54,6 @@
 
 	(defun (lst-last lst) 
 		(foldl (L (acc x) x) '() lst)) 
-
-	(defun (lst-init lst) 
-		(if (= 1 (lst-length lst))
-			'()
-			(cons (car lst) (lst-init (cdr lst)))))
 
 	(defun (filter pred lst) 
 		(foldr (L (x y) (if (pred x) (cons x y) y)) '() lst)) 
@@ -109,7 +106,7 @@
 
 	;Macros
 	(def let (macro lst 
-		(list 'apply (list 'lambda (map car (lst-init lst)) (lst-last lst)) (list 'quote (map lst-last (lst-init lst))))))
+		(list 'apply (list 'lambda (map car (car lst)) (lst-last lst)) (list 'quote (map lst-last (car lst))))))
 
 	(def cond (macro lst 
 		(if (null? lst)
