@@ -1,7 +1,7 @@
 (begin
 	(load stdlib)
 
-	(defun (sort lst)
+	(defn (sort lst)
 		(if (null? lst)
 			lst
 			(let 

@@ -26,8 +26,9 @@ instance Show LispVal where
         List l -> "(" ++ (unwords . map show) l ++ ")"
         Function _ -> "#<Function>"  
         IOFunction _ -> "#<Function>" 
-        Lambda _ _ _ _ -> "#<Lambda>"
+        Lambda s1 s2 s3 s4 -> "#<Lambda>"
         Macro _ _ _ _-> "#<Macro>"
+        Alloc -> "#<Nothing>"
 
 data LispExcept
     = TypeMismatch String LispVal

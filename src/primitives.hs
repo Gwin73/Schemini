@@ -5,7 +5,12 @@ import Data.Map (Map(..), fromList)
 import LispData
 
 primEnv = fromList 
-    [("+", Function $ intIntBinop (+)), 
+    [("atom?", Function $ lispvalQ unpackAtom),
+    ("atom->string", Function $ unop unpackAtom String id),
+    ("string->atom", Function $ unop unpackStr Atom id),
+    ("bool?", Function $ lispvalQ unpackBool),
+    ("int?", Function $ lispvalQ unpackInt), 
+    ("+", Function $ intIntBinop (+)), 
     ("-", Function $ intIntBinop (-)), 
     ("*", Function $ intIntBinop (*)), 
     ("/", Function $ intIntBinop div),
@@ -15,21 +20,19 @@ primEnv = fromList
     (">=", Function $ intBoolBinop (>=)),
     ("<", Function $ intBoolBinop (<)),
     ("<=", Function $ intBoolBinop (<=)),
-    ("int?", Function $ lispvalQ unpackInt), 
-    ("bool?", Function $ lispvalQ unpackBool),
+    ("str?", Function $ lispvalQ unpackStr), 
     ("str-append", Function $ binop unpackStr unpackStr String (++)),
-    ("int->str", Function $ unop unpackInt String show),
-    ("str->int", Function $ unop unpackStr Int read),
     ("str-length", Function $ unop unpackStr Int (toInteger . length)),
     ("str=?", Function $ binop unpackStr unpackStr Bool (==)),
-    ("str?", Function $ lispvalQ unpackStr), 
-    ("car", Function $ unop unpackLst id (head)),
-    ("cdr", Function $ unop unpackLst List (tail)),
-    ("cons", Function $ binop Right unpackLst List (:)),
+    ("int->str", Function $ unop unpackInt String show),
+    ("str->int", Function $ unop unpackStr Int read),
     ("list?", Function $ lispvalQ unpackLst), 
+    ("car", Function $ unop unpackLst id head),
+    ("cdr", Function $ unop unpackLst List tail),
+    ("cons", Function $ binop Right unpackLst List (:)),
     ("equal?", Function equal),
-    ("print-line", IOFunction printLine),
-    ("read-line", IOFunction readLine)
+    ("println", IOFunction printLine),
+    ("readln", IOFunction readLine)
     ]
 
 unop :: Unpacker a -> Packer b -> (a -> b) -> [LispVal] -> Either LispExcept LispVal
@@ -45,6 +48,10 @@ binop unpacker1 unpacker2 packer op args@[arg1, arg2] = do
     uArg2 <- unpacker2 arg2
     return $ packer $ (uArg1 `op` uArg2)
 binop _ _ _ _ badArgs = throwError $ NumArgs 2 badArgs
+
+unpackAtom :: Unpacker String
+unpackAtom (Atom s) = return s
+unpackAtom notAtom = throwError $ TypeMismatch "atom" notAtom
 
 unpackInt :: Unpacker Integer
 unpackInt (Int n) = return n

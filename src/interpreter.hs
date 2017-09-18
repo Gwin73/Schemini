@@ -19,11 +19,15 @@ main = do
             if not exists
                 then putStrLn "File does not exist"
                 else do
-                    s <- readFile (args !! 0)
-                    (((runExceptT . interp) s) >>= (putStrLn . (either show show))) `Exc.catch` (\(Exc.SomeException e) -> putStrLn $ "RuntimeError: " ++ (show e))
+                    s <- readFile $ args !! 0
+                    ((runExceptT $ interp s) >>= (putStrLn . showResult)) `Exc.catch` handler
 
 interp :: String -> ExceptT LispExcept IO LispVal
 interp input = either 
         (throwError . ParseExcept) 
         (\x -> (runReaderT (eval x) primEnv))
         (parseExpr input)
+
+handler = (\(Exc.SomeException e) -> putStrLn $ "RuntimeError: " ++ show e)
+
+showResult =  either show show

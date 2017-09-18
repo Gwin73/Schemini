@@ -7,13 +7,13 @@ import Data.Functor.Identity (Identity)
 import LispData
 
 parseExpr :: String -> Either ParseError LispVal
-parseExpr = parse (whiteSpace >> lexeme expr) "Schemini"
+parseExpr = parse (whiteSpace >> lexeme expr <* eof) "Schemini"
 
 expr :: Parser LispVal
 expr 
     =  atom      
     <|> bool
-    <|> integer
+    <|> int
     <|> str
     <|> quoted
     <|> list
@@ -24,12 +24,11 @@ atom = identifier >>= return . Atom
 bool :: Parser LispVal
 bool = (reserved "#t" >> (return $ Bool True)) <|> (reserved "#f" >> (return $ Bool False))
 
-integer :: Parser LispVal
-integer = lexeme $ many1 digit >>= return . Int . read
+int :: Parser LispVal
+int = lexeme $ many1 digit >>= return . Int . read
 
 str :: Parser LispVal
-str = lexeme $ between (char '\"') (char '\"') (many (try escapeChar <|> noneOf ['\"', '\\'])) >>= (return . String)
-    where escapeChar = char '\\' >> oneOf ['\\', '"'] >>= return
+str = stringLiteral >>= (return . String)
 
 quoted :: Parser LispVal
 quoted = lexeme $ string "'" >> expr >>= \x -> return $ List [Atom "quote", x]
@@ -37,7 +36,7 @@ quoted = lexeme $ string "'" >> expr >>= \x -> return $ List [Atom "quote", x]
 list :: Parser LispVal
 list = parens $ many expr >>= return . List
 
-Tok.TokenParser {Tok.parens = parens, Tok.identifier = identifier, Tok.reserved = reserved, Tok.lexeme = lexeme, Tok.whiteSpace = whiteSpace} = 
+Tok.TokenParser {Tok.parens = parens, Tok.identifier = identifier, Tok.reserved = reserved, Tok.lexeme = lexeme, Tok.whiteSpace = whiteSpace, Tok.stringLiteral = stringLiteral} = 
     Tok.makeTokenParser schemeDef  
 
 schemeDef :: Tok.GenLanguageDef String () Identity
