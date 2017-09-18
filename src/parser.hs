@@ -6,8 +6,8 @@ import Text.ParserCombinators.Parsec hiding (spaces)
 import Data.Functor.Identity (Identity)
 import LispData
 
-parseExpr :: String -> Either ParseError LispVal
-parseExpr = parse (whiteSpace >> lexeme expr <* eof) "Schemini"
+parseExpr :: String -> Either ParseError [LispVal]
+parseExpr = parse (whiteSpace >> (many1 $ lexeme expr) <* eof) "Schemini"
 
 expr :: Parser LispVal
 expr 

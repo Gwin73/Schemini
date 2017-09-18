@@ -1,8 +1,9 @@
-module LispData (LispVal (..), LispExcept(..), Env) where
+module LispData (LispVal (..), LispExcept(..), Env, Eval) where
 
 import Text.ParserCombinators.Parsec (ParseError)
 import Control.Monad.Except (ExceptT)
 import Data.Map (Map(..))
+import Control.Monad.Reader
 
 data LispVal 
     = Atom String
@@ -45,4 +46,6 @@ instance Show LispExcept where
         BadSpecialForm form -> "EvalError: Unrecognized special form: " ++ show form
         ParseExcept err -> "ParseError: " ++ show err
 
-type Env = Map String LispVal     
+type Env = Map String LispVal   
+
+type Eval a = ReaderT Env (ExceptT LispExcept IO) a 

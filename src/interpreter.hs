@@ -25,7 +25,7 @@ main = do
 interp :: String -> ExceptT LispExcept IO LispVal
 interp input = either 
         (throwError . ParseExcept) 
-        (\x -> (runReaderT (eval x) primEnv))
+        (\x -> (runReaderT (evalExprList x) primEnv))
         (parseExpr input)
 
 handler = (\(Exc.SomeException e) -> putStrLn $ "RuntimeError: " ++ show e)
