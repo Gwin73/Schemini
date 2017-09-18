@@ -133,15 +133,14 @@
 		((null? lst2) '())
 		(#t (cons (list (car lst1) (car lst2)) (zip (cdr lst1) (cdr lst2))))))
 
-(def t (fn (arg index structI) 
-	(let ((gettername (string->atom (str-append (atom->string structI) (str-append "-" (atom->string arg))))))
-	(list 'defn (list gettername 'lst)
-		(list 'at 'lst index)))))
-
 (defm (defr defr-name defr-argslist)
 	(let 
 		((defr-predicate (string->atom (str-append (atom->string defr-name) "?")))
-		(defr-make (string->atom (str-append (atom->string defr-name) "-make"))))
+		(defr-make (string->atom (str-append (atom->string defr-name) "-make")))
+		(defr-t (fn (arg index structI) 
+			(let ((gettername (string->atom (str-append (atom->string structI) (str-append "-" (atom->string arg))))))
+			(list 'defn (list gettername 'lst)
+			(list 'at 'lst index))))))
 		(cons 
 			'begin 
 			(cons 
@@ -151,6 +150,6 @@
 					(list 'defn (cons defr-make defr-argslist)
 						(list 'cons (list 'quote defr-name) (eval defr-argslist)))
 							(map 
-								(lambda (defr-pair) (t (car defr-pair) (car (cdr defr-pair)) defr-name))  
+								(lambda (defr-pair) (defr-t (car defr-pair) (car (cdr defr-pair)) defr-name))  
 								(zip defr-argslist 
 									(range 1 (lst-length defr-argslist)))))))))
